@@ -102,6 +102,20 @@ test('capturing a duplicate capability does not add a second copy', () => {
   assert.equal(state.board[6][2].captures.length, 1);
 });
 
+
+test('the king never inherits movement powers from captures', () => {
+  const state = customState([
+    { x: 4, y: 7, color: 'white', type: 'king' },
+    { x: 4, y: 0, color: 'black', type: 'king' },
+    { x: 4, y: 6, color: 'black', type: 'rook' }
+  ]);
+  playMove(state, { x: 4, y: 7 }, { x: 4, y: 6 });
+  const king = state.board[6][4];
+  assert.equal(king.type, 'king');
+  assert.deepEqual(king.powers, []);
+  assert.equal(getLegalMoves(state, 4, 6).some((move) => move.x === 4 && move.y === 4), false);
+});
+
 test('a captured evolved piece transfers its nested capture tree', () => {
   const state = customState([
     { x: 7, y: 7, color: 'white', type: 'king' },

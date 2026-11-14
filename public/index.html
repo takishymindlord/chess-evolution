@@ -102,7 +102,7 @@
               <div class="player-identity"><span id="selfAvatar" class="player-avatar white-avatar">♔</span><div><strong id="selfName">You</strong><small id="selfMeta">WHITE · YOU</small></div></div>
               <span class="you-tag">YOU</span>
             </div>
-            <div class="board-hint"><span><span class="hint-dot"></span> Select a piece, then a highlighted square to move.</span><div class="board-tools"><button id="orientationBtn" class="visual-style-button hidden" type="button">BOARD: AUTO</button><button id="visualStyleBtn" class="visual-style-button" type="button">VISUAL: ICONS</button></div></div>
+            <div class="board-hint"><span><span class="hint-dot"></span> Select a piece, then a highlighted square to move.</span><div class="board-tools"><label id="orientationControl" class="board-control hidden"><span>BOARD</span><select id="orientationSelect" aria-label="Local board orientation"><option value="rotate">AUTO</option><option value="fixed">FIXED</option></select></label><label class="board-control"><span>VISUAL</span><select id="visualStyleSelect" aria-label="Piece visual style"><option value="icons">ICONS</option><option value="merged">MERGED</option></select></label></div></div>
           </div>
 
           <aside class="game-sidebar">

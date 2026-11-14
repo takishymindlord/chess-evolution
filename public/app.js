@@ -230,9 +230,11 @@ function renderBoard() {
 }
 
 function pieceCapabilities(piece) {
-  // A capability is displayed once, and a piece does not badge its own native movement.
-  return [...new Set(piece?.powers || [])]
-    .filter((type) => type !== 'pawn' && type !== piece?.type)
+  // A capability is displayed once, and a piece never badges its own native movement.
+  // Kings are immutable and therefore never display inherited capabilities.
+  if (!piece || piece.type === 'king') return [];
+  return [...new Set(piece.powers || [])]
+    .filter((type) => type !== 'pawn' && type !== 'king' && type !== piece.type)
     .sort((a, b) => powerSort.indexOf(a) - powerSort.indexOf(b));
 }
 
@@ -481,18 +483,13 @@ function renderMatchStats() {
   panel.classList.remove('hidden');
 }
 
-function updateVisualStyleButton() {
-  const button = $('visualStyleBtn');
-  if (!button) return;
-  button.textContent = visualStyle === 'merged' ? 'VISUAL: MERGED' : 'VISUAL: ICONS';
-  button.setAttribute('aria-pressed', String(visualStyle === 'merged'));
-  button.title = 'Change piece appearance on this device only; online players choose independently.';
-  const orientationButton = $('orientationBtn');
-  if (orientationButton) {
-    orientationButton.classList.toggle('hidden', gameMode !== 'local');
-    orientationButton.textContent = localOrientation === 'rotate' ? 'BOARD: AUTO' : 'BOARD: FIXED';
-    orientationButton.title = 'Change local board orientation';
-  }
+function updateVisualStyleControls() {
+  const visualSelect = $('visualStyleSelect');
+  if (visualSelect) visualSelect.value = visualStyle;
+  const orientationControl = $('orientationControl');
+  const orientationSelect = $('orientationSelect');
+  if (orientationControl) orientationControl.classList.toggle('hidden', gameMode !== 'local');
+  if (orientationSelect) orientationSelect.value = localOrientation;
 }
 
 function renderGame() {
@@ -502,7 +499,7 @@ function renderGame() {
   renderStatus();
   renderHistory();
   renderMatchStats();
-  updateVisualStyleButton();
+  updateVisualStyleControls();
   if (selected) renderPieceDetail(gameState.board[selected.y][selected.x]);
 }
 
@@ -596,20 +593,22 @@ $('localOrientationSelect').value = localOrientation;
 $('localOrientationSelect').addEventListener('change', (event) => {
   localOrientation = event.target.value === 'fixed' ? 'fixed' : 'rotate';
   try { localStorage.setItem(settingsKeys.orientation, localOrientation); } catch {}
+  updateVisualStyleControls();
   if (gameMode === 'local' && gameState) renderGame();
 });
-$('orientationBtn').addEventListener('click', () => {
-  localOrientation = localOrientation === 'rotate' ? 'fixed' : 'rotate';
+$('orientationSelect').addEventListener('change', (event) => {
+  localOrientation = event.target.value === 'fixed' ? 'fixed' : 'rotate';
   $('localOrientationSelect').value = localOrientation;
   try { localStorage.setItem(settingsKeys.orientation, localOrientation); } catch {}
   if (gameMode === 'local' && gameState) renderGame();
 });
-$('visualStyleBtn').addEventListener('click', () => {
-  visualStyle = visualStyle === 'merged' ? 'icons' : 'merged';
+$('visualStyleSelect').addEventListener('change', (event) => {
+  visualStyle = event.target.value === 'merged' ? 'merged' : 'icons';
   try { localStorage.setItem(settingsKeys.visual, visualStyle); } catch {}
-  updateVisualStyleButton();
+  updateVisualStyleControls();
   if (gameState) { renderBoard(); if (selected) renderPieceDetail(gameState.board[selected.y][selected.x]); }
 });
+updateVisualStyleControls();
 $('joinRoomBtn').addEventListener('click', joinRoom);
 $('roomCodeInput').addEventListener('input', (event) => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); });
 $('roomCodeInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') joinRoom(); });
@@ -629,7 +628,7 @@ $('newGameBtn').addEventListener('click', () => {
   }
   if (socket?.connected && roomCode) socket.emit('restart-game', { code: roomCode });
 });
-updateVisualStyleButton();
+updateVisualStyleControls();
 $('promotionModal').querySelectorAll('[data-promotion]').forEach((button) => {
   button.addEventListener('click', () => handlePromotion(button.dataset.promotion));
 });

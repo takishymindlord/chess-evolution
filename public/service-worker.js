@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chess-evolution-static-v2';
+const CACHE_NAME = 'chess-evolution-static-v3';
 const APP_SHELL = [
   '/',
   '/index.html',

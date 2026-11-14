@@ -1,6 +1,6 @@
 {
   "name": "chess-evolution-online",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Chess Evolution: online and local multiplayer chess with deduplicated inherited movement, capture lineage trees, and match statistics.",

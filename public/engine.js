@@ -46,6 +46,9 @@ export function createInitialState() {
 }
 
 function movementTypes(piece) {
+  // The king is deliberately immutable: it always has orthodox king movement
+  // and can never acquire inherited movement powers.
+  if (piece.type === 'king') return new Set(['king']);
   return new Set([piece.type, ...(piece.powers || [])].filter((type) => type !== 'pawn'));
 }
 
@@ -217,14 +220,19 @@ function applyUnchecked(state, fromX, fromY, move, promotion = 'queen') {
 
   let newlyInherited = [];
   if (captured) {
-    // A captured pawn contributes only powers it previously inherited, never pawn movement.
-    // Capabilities are a set: duplicate captures do not create duplicate badges or abilities.
-    const transferred = captured.type === 'pawn'
-      ? uniquePowers(captured.powers)
-      : uniquePowers([captured.type, ...(captured.powers || [])]);
-    const alreadyOwned = new Set([piece.type, ...uniquePowers(piece.powers, piece.type)]);
-    newlyInherited = transferred.filter((type) => !alreadyOwned.has(type));
-    piece.powers = uniquePowers([...(piece.powers || []), ...newlyInherited], piece.type);
+    // The king is immutable: capturing never changes its movement capabilities.
+    if (piece.type !== 'king') {
+      // A captured pawn contributes only powers it previously inherited, never pawn movement.
+      // Capabilities are a set: duplicate captures do not create duplicate badges or abilities.
+      const transferred = captured.type === 'pawn'
+        ? uniquePowers(captured.powers)
+        : uniquePowers([captured.type, ...(captured.powers || [])]);
+      const alreadyOwned = new Set([piece.type, ...uniquePowers(piece.powers, piece.type)]);
+      newlyInherited = transferred.filter((type) => !alreadyOwned.has(type));
+      piece.powers = uniquePowers([...(piece.powers || []), ...newlyInherited], piece.type);
+    } else {
+      piece.powers = [];
+    }
 
     // Keep the capture tree on the surviving piece. If the captured unit had its own
     // capture history, that entire branch travels with it into the new tree.
