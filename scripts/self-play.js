@@ -2,8 +2,8 @@
 import { mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createInitialState, playMove, getGameStatus, allLegalMoves, applyGeneratedMove } from '../public/engine.js';
-import { AI_PERSONALITIES, evaluatePosition, findBestMove } from '../public/ai.js';
+import { createInitialState, playMove, getGameStatus, allLegalMoves, applyGeneratedMove, getPositionKey } from '../public/engine.js';
+import { AI_PERSONALITIES, evaluatePosition, extractPositionFeatures, findBestMove } from '../public/ai.js';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PERSONALITY_NAMES = Object.keys(AI_PERSONALITIES);
@@ -96,15 +96,7 @@ function coordName({ x, y }) {
 
 /** Position identity for repetition detection. Includes powers, side to move,
  * en-passant and moved flags (important for pawn double-steps/castling rights). */
-export function positionKey(state) {
-  const rows = state.board.map((row) => row.map((piece) => {
-    if (!piece) return '--';
-    const powers = piece.type === 'king' ? '' : [...new Set(piece.powers || [])].sort().join('.');
-    return `${piece.color[0]}:${piece.type}:${piece.hasMoved ? 1 : 0}:${powers}`;
-  }).join('|')).join('/');
-  const ep = state.enPassant ? `${state.enPassant.x},${state.enPassant.y}` : '-';
-  return `${state.turn};${ep};${rows}`;
-}
+export function positionKey(state) { return getPositionKey(state); }
 
 function positionSnapshot(state) {
   return {
@@ -117,6 +109,14 @@ function positionSnapshot(state) {
       hasMoved: Boolean(piece.hasMoved),
       promoted: Boolean(piece.promoted)
     }) : null))
+  };
+}
+
+function stateFromSnapshot(snapshot) {
+  return {
+    board: snapshot.board,
+    turn: snapshot.turn,
+    enPassant: snapshot.enPassant
   };
 }
 
@@ -140,13 +140,13 @@ function seededRandom(seed = 1) {
   };
 }
 
-export function chooseOpeningExplorationMove(state, profile, seed, windowCp) {
+export function chooseOpeningExplorationMove(state, profile, seed, windowCp, evaluationModel = null) {
   const legal = allLegalMoves(state, state.turn);
   if (!legal.length) return null;
   const scored = legal.map((move) => {
     const child = structuredClone(state);
     applyGeneratedMove(child, move);
-    const whiteScore = evaluatePosition(child, profile);
+    const whiteScore = evaluatePosition(child, profile, evaluationModel);
     return { move, score: state.turn === 'white' ? whiteScore : -whiteScore };
   });
   const best = Math.max(...scored.map((entry) => entry.score));
@@ -170,7 +170,7 @@ function countPieceStats(records) {
   return stats;
 }
 
-function selectPairing(gameIndex, mode, personality) {
+export function selectPairing(gameIndex, mode = 'league', personality = 'balanced') {
   if (mode === 'self') {
     // Alternate seat assignment metadata even though both sides use one style.
     return { white: personality, black: personality };
@@ -195,7 +195,8 @@ export function playSelfPlayGame({
   openingWindowCp = 8,
   seed = 1,
   watch = false,
-  onMove = null
+  onMove = null,
+  evaluationModel = null
 } = {}) {
   if (!AI_PERSONALITIES[whiteProfile] || !AI_PERSONALITIES[blackProfile]) {
     throw new Error('Unknown AI personality supplied to self-play game.');
@@ -204,8 +205,6 @@ export function playSelfPlayGame({
   const state = createInitialState();
   const moves = [];
   const positions = [];
-  const repetitions = new Map([[positionKey(state), 1]]);
-  let quietPlies = 0;
   let termination = null;
   let totalNodes = 0;
   let totalSearchMs = 0;
@@ -223,7 +222,7 @@ export function playSelfPlayGame({
     const tieBreakSeed = (Number(seed) + Math.imul(gameNumber, 1_000_003) + Math.imul(ply + 1, 97_409)) >>> 0;
     const startedAt = Date.now();
     const openingChoice = ply < openingRandomPlies
-      ? chooseOpeningExplorationMove(state, profile, tieBreakSeed, openingWindowCp)
+      ? chooseOpeningExplorationMove(state, profile, tieBreakSeed, openingWindowCp, evaluationModel)
       : null;
     const search = openingChoice
       ? {
@@ -244,7 +243,8 @@ export function playSelfPlayGame({
             maxNodes,
             personality: profile,
             randomizeTies: true,
-            tieBreakSeed
+            tieBreakSeed,
+            model: evaluationModel
           }),
           selectionMethod: 'search',
           openingCandidates: 0
@@ -283,6 +283,7 @@ export function playSelfPlayGame({
       gameNumber,
       ply,
       position: before,
+      features: extractPositionFeatures(stateFromSnapshot(before), profile),
       sideToMove: side,
       profile,
       move: enrichedMove,
@@ -297,23 +298,8 @@ export function playSelfPlayGame({
       else process.stdout.write(`${line}\n`);
     }
 
-    if (record.pieceType === 'pawn' || record.capturedType || record.promotion) quietPlies = 0;
-    else quietPlies += 1;
-
     if (state.gameOver) {
       termination = state.status;
-      break;
-    }
-
-    const key = positionKey(state);
-    const seen = (repetitions.get(key) || 0) + 1;
-    repetitions.set(key, seen);
-    if (seen >= 3) {
-      termination = 'threefold-repetition';
-      break;
-    }
-    if (quietPlies >= 100) {
-      termination = 'fifty-move-rule';
       break;
     }
   }
@@ -338,8 +324,8 @@ export function playSelfPlayGame({
     termination
   });
 
-  // Attach the final game outcome to every earlier position for future
-  // supervised value training. This is a dataset, not a trained network yet.
+  // Attach the final game outcome to every earlier position as labeled
+  // experience for the separate self-play model trainer.
   for (const sample of positions) {
     if (!sample.terminal) {
       sample.outcomeWhitePerspective = whiteOutcome;
@@ -501,12 +487,12 @@ export async function runTournament(options) {
       averageSearchMsPerGame: Math.round(aggregate.searchMs / options.games)
     },
     dataFiles: ['games.jsonl', 'positions.jsonl'],
-    trainingNote: 'Self-play experience dataset with terminal outcome labels and search diagnostics. This run does not train or update a neural network.'
+    trainingNote: 'Self-play experience dataset with terminal outcome labels and feature vectors. The Training Lab can fit and persist learned evaluation weights from these samples; this is a compact linear evaluator, not a deep neural network.'
   };
 
   const manifest = {
     application: 'Chess Evolution Self-Play Training Lab',
-    projectVersion: '1.8.0',
+    projectVersion: '1.9.0',
     createdAt: summary.createdAt,
     parameters: options,
     personalities: AI_PERSONALITIES,
@@ -515,10 +501,9 @@ export async function runTournament(options) {
       positions: 'One JSON object per position, including board state, side to move, selected move, search data and final outcome labels.'
     },
     limitations: [
-      'This generates self-play data; it does not train neural-network weights.',
-      'Personalities are handcrafted evaluation-weight profiles, not independently learned agents.',
-      'Threefold repetition, a 100-ply quiet-move rule and max-plies safety adjudication are enforced by this runner.',
-      'The browser game engine itself is unchanged by the runner-only draw adjudication.'
+      'The learned evaluator is a compact supervised linear model over nine engine features, not a deep neural network.',
+      'Named personalities remain fixed strategy profiles; the saved evaluation model is updated from game outcomes.',
+      'The shared game engine applies threefold repetition and the 100-halfmove automatic draw rule in browser, online and self-play games.'
     ]
   };
 

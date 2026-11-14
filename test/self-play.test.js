@@ -113,7 +113,7 @@ test('tournament runner writes games, labeled positions and summary files', asyn
     assert.equal(summaryText.leaderboardById.balanced.games, 1);
     assert.equal(summaryText.leaderboardById.balanced.selfMatches, 1);
     assert.match(manifest.application, /Self-Play Training Lab/);
-    assert.match(summary.trainingNote, /does not train/);
+    assert.match(summary.trainingNote, /learned evaluation weights/);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

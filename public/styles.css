@@ -206,8 +206,33 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 }
 
 /* First playable Chess Evolution AI mode */
+.ai-watch-panel{border-top-color:#6c633c}.ai-watch-button{border-color:#6c633c;background:linear-gradient(110deg,#2a2a1d,#20261f)}.ai-watch-button:hover{border-color:#b7aa5c;background:linear-gradient(110deg,#38351f,#2d3427)}
 .computer-play-panel{border-top:1px solid #293541;margin-top:19px;padding-top:18px}
 .computer-play-button{width:100%;height:46px;margin-top:12px;border:1px solid #806d3d;border-radius:8px;background:linear-gradient(110deg,#342b1d,#24271e);color:#f0dfad;display:flex;justify-content:space-between;align-items:center;padding:0 16px;font:700 10px 'DM Mono',monospace;letter-spacing:.14em;cursor:pointer;transition:background .18s,border .18s,transform .18s}
 .computer-play-button:hover{background:linear-gradient(110deg,#44371f,#303827);border-color:#c4a85d;transform:translateY(-1px)}
 .computer-play-button b{font-size:21px;color:#e5c56f;font-weight:400}
 @media(max-width:520px){.computer-play-panel{margin-top:16px;padding-top:15px}.computer-play-button{height:45px}}
+
+/* Persistent self-play training dashboard */
+.training-lab-panel{border-top-color:#647b61;background:linear-gradient(180deg,#18231f,#121a1a);border-radius:0 0 10px 10px;padding-bottom:18px}
+.training-intro{font-size:11px;line-height:1.65;color:#9caaa0;margin:0 0 13px}
+.training-start-button{border-color:#6b9674;background:linear-gradient(110deg,#213b2a,#202d28);color:#d9f0d8}
+.training-start-button:hover{border-color:#9ac79f;background:linear-gradient(110deg,#2d4b34,#2b3b30)}
+.training-start-button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.training-stop-button{width:100%;height:37px;margin-top:8px;border:1px solid #79524a;border-radius:7px;background:#2b1f1d;color:#f0c5b9;font:700 9px 'DM Mono',monospace;letter-spacing:.1em;cursor:pointer}
+.training-monitor{margin-top:16px;padding:13px;border:1px solid #34453a;border-radius:9px;background:#0e1717}
+.training-monitor-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;color:#b9d4bb;font:700 9px 'DM Mono',monospace;letter-spacing:.11em}
+.training-monitor-heading b{color:#d7c887;font-weight:500}
+.training-progress-track{height:7px;margin-top:12px;overflow:hidden;border-radius:10px;background:#25322c}
+.training-progress-fill{height:100%;width:0;border-radius:10px;background:linear-gradient(90deg,#829e62,#d4c77d);transition:width .3s ease}
+.training-progress-text{margin-top:7px;color:#9eaea1;font:9px 'DM Mono',monospace}
+.training-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
+.training-stat-grid>div{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid #26362e;border-radius:6px;background:#131f1b}
+.training-stat-grid small{color:#778c7e;font:8px 'DM Mono',monospace;letter-spacing:.08em}
+.training-stat-grid strong{color:#dfe9dc;font:600 14px 'Space Grotesk',sans-serif;overflow-wrap:anywhere}
+.training-metrics,.training-weights,.training-output,.training-error{margin:11px 0 0;color:#a9b8aa;font-size:9px;line-height:1.6;overflow-wrap:anywhere}
+.training-weights{color:#8d9e8f;font:8px/1.8 'DM Mono',monospace}
+.training-output{color:#d1c58b;font:8px 'DM Mono',monospace}
+.training-error{color:#e4a79b}
+.training-monitor code{color:#cad5c8;font-size:9px}
+@media(max-width:520px){.training-monitor{padding:10px}.training-stat-grid strong{font-size:12px}.training-intro{font-size:10px}}

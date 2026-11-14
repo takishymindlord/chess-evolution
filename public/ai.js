@@ -3,7 +3,8 @@ import {
   applyGeneratedMove,
   isInCheck,
   getAttackedSquares,
-  getPieceAttackSquares
+  getPieceAttackSquares,
+  getPositionKey
 } from './engine.js';
 
 const PIECE_VALUE = Object.freeze({
@@ -124,9 +125,35 @@ function kingPosition(state, color) {
  * In addition to material and inherited powers, it estimates exposed units,
  * defended units, capability synergies, pawn progress and king safety.
  */
-export function evaluatePosition(state, personalityName = 'balanced') {
+export const EVALUATION_FEATURES = Object.freeze([
+  'material', 'inheritance', 'synergy', 'center', 'pawnAdvance',
+  'exposure', 'protection', 'forks', 'kingSafety'
+]);
+
+export const DEFAULT_EVALUATION_MODEL = Object.freeze({
+  schemaVersion: 1,
+  generation: 0,
+  trainedGames: 0,
+  trainedPositions: 0,
+  weights: Object.freeze({
+    material: 1, inheritance: 1, synergy: 1, center: 1, pawnAdvance: 1,
+    exposure: 1, protection: 1, forks: 1, kingSafety: 1
+  })
+});
+
+function modelWeight(model, feature) {
+  const value = Number(model?.weights?.[feature]);
+  return Number.isFinite(value) ? Math.max(0.2, Math.min(3, value)) : 1;
+}
+
+/**
+ * Return the nine white-positive evaluation components used by the search engine.
+ * The training lab stores these vectors with each self-play position and fits
+ * their relative weights from game outcomes. Values are centipawn-like units.
+ */
+export function extractPositionFeatures(state, personalityName = 'balanced') {
   const personality = getPersonality(personalityName);
-  let score = 0;
+  const features = Object.fromEntries(EVALUATION_FEATURES.map((name) => [name, 0]));
   const occupied = [];
 
   for (let y = 0; y < 8; y++) {
@@ -134,36 +161,46 @@ export function evaluatePosition(state, personalityName = 'balanced') {
       const piece = state.board[y][x];
       if (!piece) continue;
       occupied.push({ piece, x, y });
-
       const sign = piece.color === 'white' ? 1 : -1;
-      let value = effectivePieceValue(piece, personality);
       const capabilities = uniqueCapabilities(piece);
+      features.material += sign * (PIECE_VALUE[piece.type] ?? 0);
+      if (piece.type !== 'king') {
+        for (const power of capabilities) {
+          if (power !== piece.type) features.inheritance += sign * (POWER_VALUE[power] ?? 0) * personality.powerValue;
+        }
+      }
 
       if (piece.type === 'pawn') {
         const advancement = piece.color === 'white' ? 6 - y : y - 1;
         const centralFileFactor = Math.max(0, 3.5 - Math.abs(3.5 - x));
-        value += Math.max(0, advancement) * (5 + centralFileFactor * 2) * personality.pawnAdvance;
-        if (advancement >= 4) value += 14 * personality.pawnAdvance;
+        features.pawnAdvance += sign * Math.max(0, advancement) * (5 + centralFileFactor * 2) * personality.pawnAdvance;
+        if (advancement >= 4) features.pawnAdvance += sign * 14 * personality.pawnAdvance;
       } else if (piece.type !== 'king') {
-        value += centerBonus(x, y) * (capabilities.has('knight') ? 1.6 : 1);
+        features.center += sign * centerBonus(x, y) * (capabilities.has('knight') ? 1.6 : 1);
       }
 
-      // A combination is more valuable than the sum of isolated badges when
-      // it creates useful movement geometry (for example, Knight + Rook).
-      if (piece.type !== 'king' && capabilities.has('knight') && capabilities.has('bishop')) value += 18 * personality.synergy;
-      if (piece.type !== 'king' && capabilities.has('rook') && capabilities.has('bishop')) value += 24 * personality.synergy;
-
-      score += sign * value;
+      if (piece.type !== 'king' && capabilities.size >= 2) {
+        features.synergy += sign * 24 * (capabilities.size - 1) * personality.synergy;
+      }
+      if (piece.type !== 'king' && capabilities.has('knight') &&
+          (capabilities.has('rook') || capabilities.has('bishop') || capabilities.has('queen'))) {
+        features.synergy += sign * 32 * personality.synergy;
+      }
+      if (piece.type !== 'king' && SPECIAL_POWERS.every((power) => capabilities.has(power))) {
+        features.synergy += sign * 260 * personality.synergy;
+      }
+      if (piece.type !== 'king' && capabilities.has('knight') && capabilities.has('bishop')) {
+        features.synergy += sign * 18 * personality.synergy;
+      }
+      if (piece.type !== 'king' && capabilities.has('rook') && capabilities.has('bishop')) {
+        features.synergy += sign * 24 * personality.synergy;
+      }
     }
   }
 
-  // Build attack maps once per evaluation. This is much cheaper than asking
-  // whether each individual square is attacked by rescanning the whole board.
   const whiteAttacks = getAttackedSquares(state, 'white');
   const blackAttacks = getAttackedSquares(state, 'black');
 
-  // Tactical exposure: evolved pieces are valuable targets. Penalize attacked
-  // pieces more heavily when no friendly unit appears to defend the square.
   for (const { piece, x, y } of occupied) {
     if (piece.type === 'king') continue;
     const square = `${x},${y}`;
@@ -172,21 +209,15 @@ export function evaluatePosition(state, personalityName = 'balanced') {
     const attacked = enemyAttacks.has(square);
     const defended = friendlyAttacks.has(square);
     const sign = piece.color === 'white' ? 1 : -1;
-
     if (attacked) {
-      const risk = effectivePieceValue(piece, personality) * (defended ? 0.09 : 0.27) * personality.exposure;
-      score -= sign * Math.min(230, risk);
+      const risk = effectivePieceValue(piece, personality) * (defended ? 0.09 : 0.27);
+      features.exposure -= sign * Math.min(230, risk) * personality.exposure;
     } else if (defended && uniqueCapabilities(piece).size > 1) {
-      // A defended hybrid has a little extra strategic stability: friendly
-      // coordination helps preserve movement powers accumulated by captures.
       const inheritedValue = Math.max(0, effectivePieceValue(piece, personality) - (PIECE_VALUE[piece.type] ?? 0));
-      score += sign * Math.min(22, 4 + inheritedValue * 0.045) * personality.protection;
+      features.protection += sign * Math.min(22, 4 + inheritedValue * 0.045) * personality.protection;
     }
   }
 
-  // Reward genuine multi-target pressure. This is deliberately a modest bonus:
-  // it recognizes forks and coordinated attacks without pretending that every
-  // pseudo-attack is automatically a forced win.
   for (const { piece, x, y } of occupied) {
     if (piece.type === 'king') continue;
     const sign = piece.color === 'white' ? 1 : -1;
@@ -201,18 +232,16 @@ export function evaluatePosition(state, personalityName = 'balanced') {
       if (targetValue >= 260) targets.push(targetValue * (isDefended ? 0.22 : 0.48));
     }
     targets.sort((a, b) => b - a);
-    if (targets.length >= 2) score += sign * Math.min(85, (targets[0] + targets[1]) * 0.055) * personality.forks;
+    if (targets.length >= 2) {
+      features.forks += sign * Math.min(85, (targets[0] + targets[1]) * 0.055) * personality.forks;
+    }
   }
 
-  // Being in check is a real positional liability. The same attack maps provide
-  // king-safety information without a second full scan of the board.
   const whiteKing = kingPosition(state, 'white');
   const blackKing = kingPosition(state, 'black');
-  if (whiteKing && blackAttacks.has(`${whiteKing.x},${whiteKing.y}`)) score -= 95;
-  if (blackKing && whiteAttacks.has(`${blackKing.x},${blackKing.y}`)) score += 95;
+  if (whiteKing && blackAttacks.has(`${whiteKing.x},${whiteKing.y}`)) features.kingSafety -= 95;
+  if (blackKing && whiteAttacks.has(`${blackKing.x},${blackKing.y}`)) features.kingSafety += 95;
 
-  // Small king-shelter bonus for nearby friendly pawns. It is intentionally
-  // modest so that material and forcing tactics dominate the evaluation.
   for (const color of ['white', 'black']) {
     const king = kingPosition(state, color);
     if (!king) continue;
@@ -224,14 +253,22 @@ export function evaluatePosition(state, personalityName = 'balanced') {
       if (x < 0 || x > 7 || y < 0 || y > 7) continue;
       if (state.board[y][x]?.color === color && state.board[y][x]?.type === 'pawn') shield += 7;
     }
-    score += (color === 'white' ? 1 : -1) * shield;
+    features.kingSafety += (color === 'white' ? 1 : -1) * shield;
   }
 
-  return score;
+  return features;
 }
 
-function evaluateForSideToMove(state, personality = 'balanced') {
-  const whiteScore = evaluatePosition(state, personality);
+/** White-positive static evaluation with optional learned feature weights. */
+export function evaluatePosition(state, personalityName = 'balanced', evaluationModel = null) {
+  const features = extractPositionFeatures(state, personalityName);
+  return EVALUATION_FEATURES.reduce((score, feature) => {
+    return score + features[feature] * modelWeight(evaluationModel, feature);
+  }, 0);
+}
+
+function evaluateForSideToMove(state, personality = 'balanced', evaluationModel = null) {
+  const whiteScore = evaluatePosition(state, personality, evaluationModel);
   return state.turn === 'white' ? whiteScore : -whiteScore;
 }
 
@@ -361,12 +398,12 @@ function quiescence(state, alpha, beta, ply, qDepth, context, knownMoves = null,
 
   if (moves.length === 0) return inCheck ? -MATE_SCORE + ply : 0;
   if (qDepth >= ABSOLUTE_QUIESCENCE_DEPTH) {
-    return evaluateForSideToMove(state, context.personality) - (inCheck ? 180 : 0);
+    return evaluateForSideToMove(state, context.personality, context.evaluationModel) - (inCheck ? 180 : 0);
   }
 
   let bestScore = -INF;
   if (!inCheck) {
-    const standPat = evaluateForSideToMove(state, context.personality);
+    const standPat = evaluateForSideToMove(state, context.personality, context.evaluationModel);
     bestScore = standPat;
     if (standPat >= beta) return standPat;
     if (standPat > alpha) alpha = standPat;
@@ -379,7 +416,7 @@ function quiescence(state, alpha, beta, ply, qDepth, context, knownMoves = null,
     ? moves
     : moves.filter((move) => Boolean(capturedPieceForMove(state, move)) || isPromotionMove(state, move));
 
-  if (tacticalMoves.length === 0) return bestScore === -INF ? evaluateForSideToMove(state, context.personality) : bestScore;
+  if (tacticalMoves.length === 0) return bestScore === -INF ? evaluateForSideToMove(state, context.personality, context.evaluationModel) : bestScore;
 
   for (const move of orderMoves(state, tacticalMoves, context, ply)) {
     const child = cloneForSearch(state);
@@ -393,7 +430,7 @@ function quiescence(state, alpha, beta, ply, qDepth, context, knownMoves = null,
   return bestScore;
 }
 
-function negamax(state, depth, alpha, beta, ply, context) {
+function negamaxNode(state, depth, alpha, beta, ply, context) {
   checkAbort(context);
   const alphaOriginal = alpha;
   const betaOriginal = beta;
@@ -445,6 +482,26 @@ function negamax(state, depth, alpha, beta, ply, context) {
     bestMoveKey
   });
   return bestScore;
+}
+
+function negamax(state, depth, alpha, beta, ply, context) {
+  const repetitionKey = getPositionKey(state);
+  const historicCount = Number(context.baseRepetitions.get(repetitionKey) || 0);
+  const pathCount = Number(context.pathRepetitions.get(repetitionKey) || 0);
+  if (historicCount + pathCount >= 1) {
+    // A repeated line is treated as a draw during search to discourage the
+    // bishop/queen ping-pong loops before the game reaches automatic 3-fold.
+    context.repetitionHits += 1;
+    const staticScore = evaluateForSideToMove(state, context.personality, context.evaluationModel);
+    return staticScore > 0 ? -18 : (staticScore < 0 ? 18 : 0);
+  }
+  context.pathRepetitions.set(repetitionKey, pathCount + 1);
+  try {
+    return negamaxNode(state, depth, alpha, beta, ply, context);
+  } finally {
+    if (pathCount === 0) context.pathRepetitions.delete(repetitionKey);
+    else context.pathRepetitions.set(repetitionKey, pathCount);
+  }
 }
 
 function searchRoot(state, moves, depth, context) {
@@ -514,6 +571,10 @@ export function findBestMove(state, options = {}) {
     killers: [],
     history: new Map(),
     personality: getPersonality(options.personality),
+    evaluationModel: options.model || null,
+    baseRepetitions: new Map(Object.entries(state.positionCounts || {}).map(([key, count]) => [key, Number(count) || 0])),
+    pathRepetitions: new Map(),
+    repetitionHits: 0,
     randomizeTies: Boolean(options.randomizeTies),
     random: createSeededRandom(options.tieBreakSeed ?? 1)
   };
@@ -542,6 +603,7 @@ export function findBestMove(state, options = {}) {
     nodes: context.nodes,
     qNodes: context.qNodes,
     ttHits: context.ttHits,
+    repetitionHits: context.repetitionHits,
     elapsedMs: Date.now() - startedAt
   };
 }

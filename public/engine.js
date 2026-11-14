@@ -20,6 +20,17 @@ function uniquePowers(values, nativeType = null) {
   return [...new Set((values || []).filter((type) => type && type !== 'pawn' && type !== nativeType))];
 }
 
+export function getPositionKey(state) {
+  const rows = state.board.map((row) => row.map((piece) => {
+    if (!piece) return '--';
+    const powers = piece.type === 'king' ? '' : [...new Set(piece.powers || [])].sort().join('.');
+    const movementRight = ['king', 'rook', 'pawn'].includes(piece.type) ? (piece.hasMoved ? 1 : 0) : 0;
+    return `${piece.color[0]}:${piece.type}:${movementRight}:${powers}`;
+  }).join('|')).join('/');
+  const ep = state.enPassant ? `${state.enPassant.x},${state.enPassant.y}` : '-';
+  return `${state.turn};${ep};${rows}`;
+}
+
 export function createInitialState() {
   const board = Array.from({ length: 8 }, () => Array(8).fill(null));
   const backRank = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
@@ -30,7 +41,7 @@ export function createInitialState() {
     board[6][x] = makePiece(`p${id++}`, 'white', 'pawn');
     board[7][x] = makePiece(`p${id++}`, 'white', backRank[x]);
   }
-  return {
+  const state = {
     board,
     turn: 'white',
     enPassant: null,
@@ -41,8 +52,13 @@ export function createInitialState() {
     status: 'active',
     winner: null,
     check: null,
-    gameOver: false
+    gameOver: false,
+    drawReason: null,
+    halfmoveClock: 0,
+    positionCounts: {}
   };
+  state.positionCounts[getPositionKey(state)] = 1;
+  return state;
 }
 
 function movementTypes(piece) {
@@ -325,11 +341,19 @@ export function allLegalMoves(state, color = state.turn) {
 export function getGameStatus(state) {
   const inCheck = isInCheck(state, state.turn);
   const moves = allLegalMoves(state, state.turn);
+  // Checkmate/stalemate take precedence over automatic draw counters.
   if (moves.length === 0) {
     if (inCheck) return { status: 'checkmate', winner: state.turn === 'white' ? 'black' : 'white', check: state.turn, gameOver: true };
-    return { status: 'stalemate', winner: null, check: null, gameOver: true };
+    return { status: 'stalemate', winner: null, check: null, gameOver: true, drawReason: 'stalemate' };
   }
-  return { status: inCheck ? 'check' : 'active', winner: null, check: inCheck ? state.turn : null, gameOver: false };
+  const repetitions = state.positionCounts?.[getPositionKey(state)] || 0;
+  if (repetitions >= 3) {
+    return { status: 'threefold-repetition', winner: null, check: inCheck ? state.turn : null, gameOver: true, drawReason: 'threefold-repetition' };
+  }
+  if ((state.halfmoveClock || 0) >= 100) {
+    return { status: 'fifty-move-rule', winner: null, check: inCheck ? state.turn : null, gameOver: true, drawReason: 'fifty-move-rule' };
+  }
+  return { status: inCheck ? 'check' : 'active', winner: null, check: inCheck ? state.turn : null, gameOver: false, drawReason: null };
 }
 
 /**
@@ -371,8 +395,13 @@ export function playMove(state, from, to, promotion = 'queen') {
   if (!move) throw new Error('That move is not legal.');
 
   const movingType = piece.type;
+  if (!state.positionCounts) state.positionCounts = { [getPositionKey(state)]: 1 };
+  else if (!state.positionCounts[getPositionKey(state)]) state.positionCounts[getPositionKey(state)] = 1;
   const notation = `${piece.color === 'white' ? 'White' : 'Black'} ${PIECE_NAMES[movingType]} ${squareName(from.x, from.y)} → ${squareName(to.x, to.y)}`;
   const result = applyUnchecked(state, from.x, from.y, move, promotion);
+  state.halfmoveClock = movingType === 'pawn' || result.captured ? 0 : (state.halfmoveClock || 0) + 1;
+  const resultingPositionKey = getPositionKey(state);
+  state.positionCounts[resultingPositionKey] = (state.positionCounts[resultingPositionKey] || 0) + 1;
   const promotedTo = movingType === 'pawn' && result.piece.type !== 'pawn' ? result.piece.type : null;
   const record = {
     number: state.history.length + 1,
