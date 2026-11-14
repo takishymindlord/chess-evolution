@@ -1,13 +1,14 @@
 {
   "name": "chess-evolution-online",
-  "version": "1.5.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
-  "description": "Chess Evolution: maximum-hybrid star in both visual modes, reliable match-end dialog, online and local multiplayer.",
+  "description": "Chess Evolution with cumulative inheritance, tactical AI, and a local self-play tournament/data-generation lab.",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "selfplay": "node scripts/self-play.js"
   },
   "engines": {
     "node": ">=22 <27"

@@ -1,4 +1,4 @@
-# Chess Evolution v1.5.0
+# Chess Evolution v1.8.0
 
 Chess Evolution is a browser chess game with cumulative capture inheritance, online room-based multiplayer, and local pass-and-play.
 
@@ -84,3 +84,56 @@ Render web services support server-side applications and WebSockets. Free instan
 - Match completion opens a native browser modal with the winner/draw announcement and a Statistics or Close choice. Online matches broadcast an explicit `match-ended` event to both players.
 - Front page credit: Created by TakishyMindlord Labs.
 - PWA cache version bumped to v5 and includes the new `piece-visuals.js` module.
+
+
+## Play against the computer (v1.7)
+
+The lobby includes a local **Play Against Computer** mode. The AI runs in a browser Web Worker, so its search does not block board interaction. Choose White or Black and one of five initial search presets. The engine uses the same Chess Evolution legal-move and capture-inheritance rules as human play.
+
+The AI now uses iterative-deepening negamax, alpha-beta pruning, a transposition table, quiescence search, killer/history move ordering, and an evolution-aware tactical evaluator. It values unique inherited movement powers and useful capability combinations, penalizes exposed evolved pieces, rewards defended units and multi-target pressure, and searches forcing capture sequences beyond the nominal depth. It also recognizes forced checkmates, including the finishing move from the supplied 31-move test game. It does not yet use a trained neural network. The difficulty presets limit search depth, time, and nodes; they remain initial settings and have not been calibrated through tournament play.
+
+To test: start the project with `npm start`, open `http://localhost:3000`, select a side and difficulty in **Play Against Computer**, and start a match. Computer play runs locally and does not require a live Render server once the app assets are available.
+
+
+## v1.7.0 AI tactical upgrade
+
+- Added quiescence search so the engine continues through forcing captures and check evasions instead of evaluating immediately after a capture sequence begins.
+- Added a transposition table with exact/lower/upper bounds and mate-distance score normalization.
+- Added killer-move and history heuristics alongside capture, promotion, inheritance-gain and previous-best-move ordering.
+- Improved evaluation of unique acquired powers, power synergies, advanced pawns, king shelter, attacked/undefended hybrids, and multi-target pressure (fork-like threats).
+- Added bulk attack maps to the chess engine so threat evaluation can inspect all squares with one board pass per side.
+- Added regression tests for checkmate-in-one, avoiding a poisoned capture, evaluating exposed evolved pieces, transposition reuse, bulk attack-map consistency, and the finishing move from the supplied 31-move human test game.
+- Bumped the service-worker cache to `v7`; no new runtime dependencies are required.
+
+The AI is still search-based and uses handcrafted evaluation weights. Neural-network training and calibrated strength ratings are future work.
+
+## v1.8.0 — Self-Play Training Lab
+
+A separate local Node.js self-play runner has been added for AI-vs-AI tournaments and experience-data generation. It does not add a public in-browser AI-vs-AI button and it does not use the Render server; run it on your development PC.
+
+Install dependencies and run tests:
+
+```powershell
+npm install
+npm test
+```
+
+Run a small ten-game pilot:
+
+```powershell
+npm run selfplay -- --games 10 --depth 1 --time-ms 50 --max-nodes 1200 --max-plies 100 --watch
+```
+
+Run the default 100-game personality league:
+
+```powershell
+npm run selfplay -- --games 100 --depth 1 --time-ms 80 --max-nodes 2500 --max-plies 120
+```
+
+The lab pits four handcrafted evaluation personalities against one another: Balanced, Evolutionist, Guardian and Tactician. It rotates round-robin pairings and swaps colors in the return game. Use `--mode self --personality balanced` to have one personality play itself. `--watch` prints the first game's moves in the terminal. To reduce repetitive openings, the first four plies use seeded exploration among legal moves whose static evaluation is within eight centipawns of the best candidate; later moves use the regular search. Supply `--seed N` to reproduce a run or use a different seed to generate alternative openings.
+
+Each run writes `games.jsonl`, `positions.jsonl`, `summary.json` and `manifest.json` to a timestamped folder under `data/self-play/`. Position records include the inherited capability set, selected move, search diagnostics and final outcome labels for later training experiments.
+
+Draw protection in the runner includes threefold repetition, a 100-half-move quiet-move rule, and a configurable maximum-ply limit. These runner adjudications do not modify the browser chess rules.
+
+**Important:** This is a self-play data-generation milestone, not neural-network training. The four personalities are handcrafted evaluation-weight profiles. The generated data is saved for later analysis and possible neural-network training; the current AI's weights are not automatically updated. See `SELF-PLAY-LAB.md` for all command options and output schemas.
