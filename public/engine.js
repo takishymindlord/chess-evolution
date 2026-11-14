@@ -13,7 +13,11 @@ const squareName = (x, y) => `${FILES[x]}${8 - y}`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function makePiece(id, color, type) {
-  return { id, color, type, powers: [], hasMoved: false };
+  return { id, color, type, powers: [], captures: [], hasMoved: false };
+}
+
+function uniquePowers(values, nativeType = null) {
+  return [...new Set((values || []).filter((type) => type && type !== 'pawn' && type !== nativeType))];
 }
 
 export function createInitialState() {
@@ -211,19 +215,28 @@ function applyUnchecked(state, fromX, fromY, move, promotion = 'queen') {
     board[capturedY][toX] = null;
   }
 
+  let newlyInherited = [];
   if (captured) {
-    // Pawns do not donate their native forward/diagonal pawn movement. A powered-up pawn
-    // still passes along the special powers it previously inherited.
-    const inherited = captured.type === 'pawn'
-      ? [...(captured.powers || [])]
-      : [captured.type, ...(captured.powers || [])];
-    piece.powers.push(...inherited);
-    state.captured[piece.color].push({
+    // A captured pawn contributes only powers it previously inherited, never pawn movement.
+    // Capabilities are a set: duplicate captures do not create duplicate badges or abilities.
+    const transferred = captured.type === 'pawn'
+      ? uniquePowers(captured.powers)
+      : uniquePowers([captured.type, ...(captured.powers || [])]);
+    const alreadyOwned = new Set([piece.type, ...uniquePowers(piece.powers, piece.type)]);
+    newlyInherited = transferred.filter((type) => !alreadyOwned.has(type));
+    piece.powers = uniquePowers([...(piece.powers || []), ...newlyInherited], piece.type);
+
+    // Keep the capture tree on the surviving piece. If the captured unit had its own
+    // capture history, that entire branch travels with it into the new tree.
+    const capturedNode = {
       id: captured.id,
       color: captured.color,
       type: captured.type,
-      powers: [...(captured.powers || [])]
-    });
+      powers: uniquePowers(captured.powers, captured.type),
+      captures: clone(captured.captures || [])
+    };
+    piece.captures = [...(piece.captures || []), capturedNode];
+    state.captured[piece.color].push(clone(capturedNode));
   }
 
   board[fromY][fromX] = null;
@@ -242,6 +255,9 @@ function applyUnchecked(state, fromX, fromY, move, promotion = 'queen') {
   if (piece.type === 'pawn' && (toY === 0 || toY === 7)) {
     piece.type = ['queen', 'rook', 'bishop', 'knight'].includes(promotion) ? promotion : 'queen';
     piece.promoted = true;
+    // Promotion changes the native identity, so it no longer needs a duplicate copy
+    // of that same movement capability in its inherited set.
+    piece.powers = uniquePowers(piece.powers, piece.type);
   }
 
   state.enPassant = move.doublePawn ? { x: fromX, y: (fromY + toY) / 2 } : null;
@@ -249,7 +265,7 @@ function applyUnchecked(state, fromX, fromY, move, promotion = 'queen') {
   state.turn = previousTurn === 'white' ? 'black' : 'white';
   if (previousTurn === 'black') state.moveNumber += 1;
 
-  return { piece, captured, inherited: captured ? (captured.type === 'pawn' ? [...(captured.powers || [])] : [captured.type, ...(captured.powers || [])]) : [] };
+  return { piece, captured, inherited: newlyInherited };
 }
 
 export function getLegalMoves(state, x, y) {
@@ -322,9 +338,7 @@ export function playMove(state, from, to, promotion = 'queen') {
 }
 
 export function getPowerCounts(piece) {
-  const counts = {};
-  for (const power of piece?.powers || []) counts[power] = (counts[power] || 0) + 1;
-  return counts;
+  return Object.fromEntries(uniquePowers(piece?.powers, piece?.type).map((power) => [power, 1]));
 }
 
 export function squareToCoords(square) {

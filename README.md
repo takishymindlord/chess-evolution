@@ -5,7 +5,7 @@ Chess Evolution is a browser chess game with cumulative capture inheritance, onl
 ## Modes
 
 - **Online multiplayer:** create a six-character room code and share it with someone anywhere in the world. Both players open the same public website; Socket.IO synchronizes moves and the server validates them.
-- **Local pass-and-play:** two people share one phone, tablet, or computer. Enter the second player's name and choose **Play Locally**. The board automatically rotates to face the player whose turn it is. Local mode does not require a network connection once the app has loaded.
+- **Local pass-and-play:** two people share one phone, tablet, or computer. Enter the second player's name and choose **Play Locally**. Before starting, choose whether the board rotates toward the player to move or stays fixed with White at the bottom. The orientation can also be toggled during a local match. Local mode does not require a network connection once the app has loaded.
 
 ## Phone and tablet support
 
@@ -51,10 +51,19 @@ Render web services support server-side applications and WebSockets. Free instan
 - Room state is currently stored in server memory. A server restart, redeploy, or sleep/wake restart can clear live rooms. This build does not yet have user accounts, persistent match storage, or multi-instance shared state.
 - For a larger production deployment, add a persistent database and a shared Socket.IO adapter (such as Redis) before scaling to multiple server instances.
 
-## Inheritance rules
+## Piece appearance and preferences
 
-- Capturing a piece grants its movement type plus every power it had already inherited.
+- The **VISUAL: ICONS / VISUAL: MERGED** button changes how hybrid pieces appear. The icon style shows one small symbol for each additional movement capability. The merged style combines the original piece with the inherited symbols; a piece with queen, rook, bishop, and knight capabilities becomes a star emblem.
+- Visual preference is saved locally in each browser/device. In an online match, the two players can choose different appearances without changing the shared match state or the other player's view.
+- In local play, the visual style applies to the shared device for both players.
+
+## Inheritance and capture history
+
+- Capturing a piece grants its movement type plus every special power it had already inherited.
 - Capturing a pawn does not grant pawn movement. If that pawn had inherited special powers, those powers still pass to the capturing piece.
 - A pawn retains its own pawn rules while adding inherited rook, bishop, knight, or queen movement.
-- Duplicate powers remain in the lineage display. Movement uses the union of the movement types, so duplicate copies are recorded but do not create a new variation of an already-owned move set.
+- Capabilities are stored as a set: capturing another piece with an already-owned movement type does not add a duplicate capability or a duplicate badge. A piece also does not display its own native movement as an inherited badge.
+- Select any piece to open its **Capture History** tree. It shows the pieces that unit captured and nested branches from captured pieces that had captured others. When an evolved piece is captured, its complete nested capture tree moves with it to the capturing piece.
+- The merged star emblem appears when a unit has all four special movement types: queen, rook, bishop, and knight.
+- At checkmate or stalemate, a match-statistics recap appears with each side's moves, captures, newly acquired abilities, promotions, and most-evolved surviving unit.
 - Standard king safety, check, checkmate, stalemate, castling, en passant, and promotion are included.

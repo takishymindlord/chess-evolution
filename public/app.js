@@ -1,4 +1,4 @@
-import { createInitialState, getLegalMoves, getPowerCounts, PIECE_NAMES, playMove } from './engine.js';
+import { createInitialState, getLegalMoves, PIECE_NAMES, playMove } from './engine.js';
 
 const $ = (id) => document.getElementById(id);
 const socket = typeof window.io === 'function' ? window.io({ transports: ['websocket', 'polling'] }) : null;
@@ -8,6 +8,9 @@ const glyphs = {
 };
 const tinyGlyphs = { king: '♚', queen: '♛', rook: '♜', bishop: '♝', knight: '♞', pawn: '♟' };
 const powerSort = ['queen', 'rook', 'bishop', 'knight', 'king'];
+const corePowers = ['queen', 'rook', 'bishop', 'knight'];
+const settingsKeys = { orientation: 'chessEvolution.localOrientation', visual: 'chessEvolution.visualStyle' };
+const readSetting = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } };
 
 const playerId = getOrCreatePlayerId();
 let roomCode = null;
@@ -20,6 +23,8 @@ let selected = null;
 let legalMoves = [];
 let pendingPromotion = null;
 let toastTimer = null;
+let localOrientation = readSetting(settingsKeys.orientation, 'rotate') === 'fixed' ? 'fixed' : 'rotate';
+let visualStyle = readSetting(settingsKeys.visual, 'icons') === 'merged' ? 'merged' : 'icons';
 
 function getOrCreatePlayerId() {
   let id = sessionStorage.getItem('chessEvolution.playerId');
@@ -82,7 +87,7 @@ function clearSession() {
 function startLocalGame() {
   gameMode = 'local';
   roomCode = null;
-  myColor = 'white'; // Keep the board orientation fixed for pass-and-play.
+  myColor = 'white';
   gameState = createInitialState();
   players = {
     white: { name: getPlayerName() },
@@ -173,7 +178,7 @@ function leaveRoom() {
 }
 
 function boardPerspective() {
-  return gameMode === 'local' ? gameState.turn : myColor;
+  return gameMode === 'local' ? (localOrientation === 'rotate' ? gameState.turn : 'white') : myColor;
 }
 
 function orderedSquares() {
@@ -208,8 +213,14 @@ function renderBoard() {
     const perspective = boardPerspective();
     const bottomRank = perspective === 'black' ? y === 0 : y === 7;
     const leftFile = perspective === 'black' ? x === 7 : x === 0;
-    const powerMarkup = piece ? makePowerBadges(piece) : '';
-    const pieceMarkup = piece ? `<span class="piece ${piece.color} ${piece.powers?.length ? 'hybrid' : ''}">${piece.powers?.length ? '<span class="piece-halo"></span>' : ''}<span class="piece-glyph">${glyphs[piece.color][piece.type]}</span>${powerMarkup}</span>` : '';
+    const capabilities = piece ? pieceCapabilities(piece) : [];
+    const isHybrid = capabilities.length > 0;
+    const identityMarkup = piece
+      ? (visualStyle === 'merged' && isHybrid
+        ? makeMergedVisual(piece)
+        : `<span class="piece-glyph">${glyphs[piece.color][piece.type]}</span>${isHybrid ? makePowerBadges(piece) : ''}`)
+      : '';
+    const pieceMarkup = piece ? `<span class="piece ${piece.color} ${isHybrid ? 'hybrid' : ''} ${visualStyle === 'merged' ? 'merged-style' : ''}">${isHybrid ? '<span class="piece-halo"></span>' : ''}${identityMarkup}</span>` : '';
     return `<button class="${squareClass}" data-x="${x}" data-y="${y}" type="button" role="gridcell" aria-label="${squareName(x,y)}${piece ? ` ${piece.color} ${piece.type}` : ''}${isLegal ? ', legal move' : ''}">${pieceMarkup}${bottomRank ? `<span class="coord-file">${'abcdefgh'[x]}</span>` : ''}${leftFile ? `<span class="coord-rank">${8-y}</span>` : ''}</button>`;
   }).join('');
   board.querySelectorAll('.square').forEach((square) => {
@@ -218,12 +229,41 @@ function renderBoard() {
   renderCoordinates();
 }
 
+function pieceCapabilities(piece) {
+  // A capability is displayed once, and a piece does not badge its own native movement.
+  return [...new Set(piece?.powers || [])]
+    .filter((type) => type !== 'pawn' && type !== piece?.type)
+    .sort((a, b) => powerSort.indexOf(a) - powerSort.indexOf(b));
+}
+
 function makePowerBadges(piece) {
-  const counts = getPowerCounts(piece);
-  const sorted = Object.entries(counts).sort((a,b) => powerSort.indexOf(a[0]) - powerSort.indexOf(b[0]));
-  const visible = sorted.slice(0, 3);
-  const hiddenCount = sorted.length - visible.length;
-  return `<span class="power-badges">${visible.map(([type,count]) => `<span class="power-badge" title="Inherited ${PIECE_NAMES[type]}${count > 1 ? ` × ${count}` : ''}">${tinyGlyphs[type] || '✦'}${count > 1 ? `<small style="font-size:6px">${count}</small>` : ''}</span>`).join('')}${hiddenCount > 0 ? `<span class="power-badge more">+${hiddenCount}</span>` : ''}</span>`;
+  const capabilities = pieceCapabilities(piece);
+  if (!capabilities.length) return '';
+  return `<span class="power-badges">${capabilities.map((type) => `<span class="power-badge" title="${PIECE_NAMES[type]} movement">${tinyGlyphs[type] || '✦'}</span>`).join('')}</span>`;
+}
+
+function makeMergedVisual(piece) {
+  const capabilities = pieceCapabilities(piece);
+  if (!capabilities.length) return '';
+  const hasCompleteSet = corePowers.every((type) => (piece.powers || []).includes(type) || piece.type === type);
+  if (hasCompleteSet) {
+    return `<span class="merged-emblem merged-star" title="All four special movement styles"><span>✦</span><small>${glyphs[piece.color][piece.type]}</small></span>`;
+  }
+  return `<span class="merged-emblem" aria-label="Hybrid piece"><span class="merged-original">${glyphs[piece.color][piece.type]}</span><span class="merged-additions">${capabilities.map((type) => `<i title="${PIECE_NAMES[type]} movement">${tinyGlyphs[type] || '✦'}</i>`).join('')}</span></span>`;
+}
+
+function captureTreeCount(nodes = []) {
+  return nodes.reduce((total, node) => total + 1 + captureTreeCount(node.captures || []), 0);
+}
+
+function renderCaptureTree(nodes = []) {
+  if (!nodes.length) return '<div class="tree-empty">No captures in this piece’s history yet.</div>';
+  return `<ul class="capture-tree-list">${nodes.map((node) => {
+    const mark = glyphs[node.color]?.[node.type] || tinyGlyphs[node.type] || '✦';
+    const inherited = [...new Set(node.powers || [])].filter((type) => type !== node.type && type !== 'pawn');
+    const powers = inherited.length ? `<small>Abilities: ${inherited.map((type) => PIECE_NAMES[type]).join(', ')}</small>` : '';
+    return `<li><div class="capture-tree-node"><span class="tree-piece ${node.color}">${mark}</span><span><b>${escapeHtml(PIECE_NAMES[node.type] || node.type)}</b><small>${node.color === 'white' ? 'White' : 'Black'} piece</small>${powers}</span></div>${(node.captures || []).length ? renderCaptureTree(node.captures) : ''}</li>`;
+  }).join('')}</ul>`;
 }
 
 function renderCoordinates() {
@@ -243,13 +283,13 @@ function findKing(state, color) {
 }
 
 function onSquareClick(x, y) {
-  if (!gameState || gameState.gameOver || (gameMode === 'online' && !players.black)) return;
-  const actingColor = gameMode === 'local' ? gameState.turn : myColor;
-  if (gameState.turn !== actingColor) return toast('Wait for the other player’s move.');
+  if (!gameState || (gameMode === 'online' && !players.black)) return;
+  const allowedColor = gameMode === 'local' ? gameState.turn : myColor;
+  const canMoveNow = !gameState.gameOver && gameState.turn === allowedColor;
   const clicked = gameState.board[y][x];
   if (selected) {
     const move = legalMoves.find((candidate) => candidate.x === x && candidate.y === y);
-    if (move) {
+    if (move && canMoveNow) {
       const movingPiece = gameState.board[selected.y][selected.x];
       if (movingPiece.type === 'pawn' && (y === 0 || y === 7)) {
         pendingPromotion = { from: selected, to: { x, y } };
@@ -262,8 +302,8 @@ function onSquareClick(x, y) {
       renderBoard();
       return;
     }
-    if (clicked?.color === actingColor) {
-      choosePiece(x, y);
+    if (clicked) {
+      choosePiece(x, y); // Selecting an inactive/opponent piece is inspection-only.
       return;
     }
     selected = null;
@@ -272,14 +312,18 @@ function onSquareClick(x, y) {
     renderPieceDetail(null);
     return;
   }
-  if (clicked?.color === actingColor) choosePiece(x, y);
+  if (clicked) choosePiece(x, y);
 }
 
 function choosePiece(x, y) {
+  const piece = gameState.board[y][x];
   selected = { x, y };
-  legalMoves = getLegalMoves(gameState, x, y);
+  const allowedColor = gameMode === 'local' ? gameState.turn : myColor;
+  legalMoves = !gameState.gameOver && piece?.color === allowedColor && gameState.turn === allowedColor
+    ? getLegalMoves(gameState, x, y)
+    : [];
   renderBoard();
-  renderPieceDetail(gameState.board[y][x]);
+  renderPieceDetail(piece);
 }
 
 function handlePromotion(type) {
@@ -296,32 +340,36 @@ function renderPieceDetail(piece) {
   $('pieceDetailEmpty').classList.toggle('hidden', Boolean(piece));
   $('pieceDetail').classList.toggle('hidden', !piece);
   if (!piece) return;
-  const counts = getPowerCounts(piece);
-  const sorted = Object.entries(counts).sort((a,b) => powerSort.indexOf(a[0]) - powerSort.indexOf(b[0]));
-  const powers = sorted.length
-    ? `<div class="power-pills">${sorted.map(([type,count]) => `<span class="power-pill">${PIECE_NAMES[type].toUpperCase()}<span>${count > 1 ? `×${count}` : '＋'}</span></span>`).join('')}</div>`
-    : '<div class="power-empty">No inherited powers yet.</div>';
-  const owner = gameMode === 'local' ? `${piece.color === 'white' ? 'White' : 'Black'} player’s` : (piece.color === myColor ? 'Your' : 'Opponent’s');
-  $('pieceDetail').innerHTML = `<div class="detail-piece-glyph">${glyphs[piece.color][piece.type]}</div><div class="detail-piece-info"><strong>${owner} ${PIECE_NAMES[piece.type]}</strong><small>${piece.color.toUpperCase()} · ${piece.id.toUpperCase()} · ${piece.powers.length} INHERITED POWER${piece.powers.length === 1 ? '' : 'S'}</small>${powers}</div>`;
+  const capabilities = pieceCapabilities(piece);
+  const powers = capabilities.length
+    ? `<div class="power-pills">${capabilities.map((type) => `<span class="power-pill">${tinyGlyphs[type] || '✦'} ${PIECE_NAMES[type].toUpperCase()}</span>`).join('')}</div>`
+    : '<div class="power-empty">No additional movement capabilities.</div>';
+  const owner = gameMode === 'local'
+    ? `${piece.color === 'white' ? 'White' : 'Black'} player’s`
+    : (piece.color === myColor ? 'Your' : 'Opponent’s');
+  const captures = piece.captures || [];
+  const captureCount = captureTreeCount(captures);
+  const tree = `<details class="capture-tree-disclosure"><summary>VIEW CAPTURE HISTORY <span>${captureCount} ${captureCount === 1 ? 'PIECE' : 'PIECES'}</span></summary><div class="capture-tree"><div class="capture-tree-root"><span>${glyphs[piece.color][piece.type]}</span><b>${PIECE_NAMES[piece.type]} · THIS PIECE</b></div>${renderCaptureTree(captures)}</div></details>`;
+  $('pieceDetail').innerHTML = `<div class="detail-piece-glyph">${glyphs[piece.color][piece.type]}</div><div class="detail-piece-info"><strong>${owner} ${PIECE_NAMES[piece.type]}</strong><small>${piece.color.toUpperCase()} · ${piece.id.toUpperCase()} · ${capabilities.length} ADDITIONAL CAPABILITIES</small>${powers}${tree}</div>`;
 }
 
 function renderPlayers() {
   if (gameMode === 'local') {
-    const bottomColor = gameState.turn;
+    const bottomColor = localOrientation === 'rotate' ? gameState.turn : 'white';
     const topColor = bottomColor === 'white' ? 'black' : 'white';
     const bottom = players[bottomColor];
     const top = players[topColor];
     $('selfName').textContent = bottom?.name || (bottomColor === 'white' ? 'White' : 'Black');
-    $('selfMeta').textContent = `${bottomColor.toUpperCase()} · TO MOVE · ${gameState.captured?.[bottomColor]?.length || 0} CAPTURES`;
+    $('selfMeta').textContent = `${bottomColor.toUpperCase()} · ${bottomColor === gameState.turn ? 'TO MOVE' : 'LOCAL PLAYER'} · ${gameState.captured?.[bottomColor]?.length || 0} CAPTURES`;
     $('selfAvatar').textContent = glyphs[bottomColor].king;
     $('selfAvatar').className = `player-avatar ${bottomColor === 'white' ? 'white-avatar' : 'black-avatar'}`;
     $('opponentName').textContent = top?.name || (topColor === 'white' ? 'White' : 'Black');
-    $('opponentMeta').textContent = `${topColor.toUpperCase()} · LOCAL PLAYER · ${gameState.captured?.[topColor]?.length || 0} CAPTURES`;
+    $('opponentMeta').textContent = `${topColor.toUpperCase()} · ${topColor === gameState.turn ? 'TO MOVE' : 'LOCAL PLAYER'} · ${gameState.captured?.[topColor]?.length || 0} CAPTURES`;
     $('opponentAvatar').textContent = glyphs[topColor].king;
     $('opponentAvatar').className = `player-avatar ${topColor === 'white' ? 'white-avatar' : 'black-avatar'}`;
     $('opponentPresence').classList.add('online');
     $('opponentPresence').classList.remove('offline');
-    $('selfStrip').querySelector('.you-tag').textContent = 'TO MOVE';
+    $('selfStrip').querySelector('.you-tag').textContent = bottomColor === gameState.turn ? 'TO MOVE' : 'BOTTOM';
     return;
   }
   $('selfStrip').querySelector('.you-tag').textContent = 'YOU';
@@ -375,7 +423,9 @@ function renderStatus() {
   } else {
     label.textContent = `${gameState.turn.toUpperCase()} TO MOVE`;
     headline.textContent = isLocal ? `${activeName} to move.` : (yourTurn ? 'Your move.' : 'Opponent’s turn.');
-    subline.textContent = isLocal ? `${activeName} to play. The board turns to face the next player after each move.` : (yourTurn ? 'Capture to evolve your pieces.' : 'Watch their pieces. Every capture matters.');
+    subline.textContent = isLocal
+      ? (localOrientation === 'rotate' ? `${activeName} to play. The board rotates toward the next player.` : `${activeName} to play. The board stays fixed with White at the bottom.`)
+      : (yourTurn ? 'Capture to evolve your pieces.' : 'Watch their pieces. Every capture matters.');
   }
 
   const last = gameState.history.at(-1);
@@ -401,12 +451,58 @@ function renderHistory() {
   }).join('');
 }
 
+function renderMatchStats() {
+  const panel = $('matchStats');
+  if (!gameState?.gameOver) {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    return;
+  }
+  const history = gameState.history || [];
+  const summarize = (color) => {
+    const moves = history.filter((move) => move.color === color);
+    const captures = moves.filter((move) => Boolean(move.capturedType)).length;
+    const abilities = moves.reduce((sum, move) => sum + (move.inherited || []).length, 0);
+    const promotions = moves.filter((move) => Boolean(move.promotion)).length;
+    const pieces = gameState.board.flat().filter((piece) => piece?.color === color);
+    const mostEvolved = pieces.reduce((best, piece) => {
+      const value = new Set([piece.type, ...(piece.powers || [])]).size;
+      return !best || value > best.value ? { piece, value } : best;
+    }, null);
+    return { moves: moves.length, captures, abilities, promotions, mostEvolved };
+  };
+  const white = summarize('white');
+  const black = summarize('black');
+  const result = gameState.winner
+    ? `${gameState.winner === 'white' ? (players.white?.name || 'White') : (players.black?.name || 'Black')} won`
+    : 'Draw';
+  const statColumn = (color, data) => `<div class="stats-player"><b>${color === 'white' ? 'WHITE' : 'BLACK'} · ${escapeHtml(players[color]?.name || (color === 'white' ? 'White' : 'Black'))}</b><span>${data.moves} moves</span><span>${data.captures} captures</span><span>${data.abilities} new abilities</span><span>${data.promotions} promotions</span><small>${data.mostEvolved ? `Most evolved: ${PIECE_NAMES[data.mostEvolved.piece.type]} (${data.mostEvolved.value} capabilities)` : 'No surviving pieces'}</small></div>`;
+  panel.innerHTML = `<div class="stats-heading"><b>MATCH STATISTICS</b><strong>${escapeHtml(result)}</strong></div><div class="stats-total"><span>${history.length} total plies</span><span>${gameState.status === 'checkmate' ? 'Checkmate' : 'Stalemate'}</span></div><div class="stats-columns">${statColumn('white', white)}${statColumn('black', black)}</div>`;
+  panel.classList.remove('hidden');
+}
+
+function updateVisualStyleButton() {
+  const button = $('visualStyleBtn');
+  if (!button) return;
+  button.textContent = visualStyle === 'merged' ? 'VISUAL: MERGED' : 'VISUAL: ICONS';
+  button.setAttribute('aria-pressed', String(visualStyle === 'merged'));
+  button.title = 'Change piece appearance on this device only; online players choose independently.';
+  const orientationButton = $('orientationBtn');
+  if (orientationButton) {
+    orientationButton.classList.toggle('hidden', gameMode !== 'local');
+    orientationButton.textContent = localOrientation === 'rotate' ? 'BOARD: AUTO' : 'BOARD: FIXED';
+    orientationButton.title = 'Change local board orientation';
+  }
+}
+
 function renderGame() {
   if (!gameState || !myColor) return;
   renderPlayers();
   renderBoard();
   renderStatus();
   renderHistory();
+  renderMatchStats();
+  updateVisualStyleButton();
   if (selected) renderPieceDetail(gameState.board[selected.y][selected.x]);
 }
 
@@ -496,6 +592,24 @@ if (socket) {
 
 $('createRoomBtn').addEventListener('click', createRoom);
 $('localPlayBtn').addEventListener('click', startLocalGame);
+$('localOrientationSelect').value = localOrientation;
+$('localOrientationSelect').addEventListener('change', (event) => {
+  localOrientation = event.target.value === 'fixed' ? 'fixed' : 'rotate';
+  try { localStorage.setItem(settingsKeys.orientation, localOrientation); } catch {}
+  if (gameMode === 'local' && gameState) renderGame();
+});
+$('orientationBtn').addEventListener('click', () => {
+  localOrientation = localOrientation === 'rotate' ? 'fixed' : 'rotate';
+  $('localOrientationSelect').value = localOrientation;
+  try { localStorage.setItem(settingsKeys.orientation, localOrientation); } catch {}
+  if (gameMode === 'local' && gameState) renderGame();
+});
+$('visualStyleBtn').addEventListener('click', () => {
+  visualStyle = visualStyle === 'merged' ? 'icons' : 'merged';
+  try { localStorage.setItem(settingsKeys.visual, visualStyle); } catch {}
+  updateVisualStyleButton();
+  if (gameState) { renderBoard(); if (selected) renderPieceDetail(gameState.board[selected.y][selected.x]); }
+});
 $('joinRoomBtn').addEventListener('click', joinRoom);
 $('roomCodeInput').addEventListener('input', (event) => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); });
 $('roomCodeInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') joinRoom(); });
@@ -515,6 +629,7 @@ $('newGameBtn').addEventListener('click', () => {
   }
   if (socket?.connected && roomCode) socket.emit('restart-game', { code: roomCode });
 });
+updateVisualStyleButton();
 $('promotionModal').querySelectorAll('[data-promotion]').forEach((button) => {
   button.addEventListener('click', () => handlePromotion(button.dataset.promotion));
 });

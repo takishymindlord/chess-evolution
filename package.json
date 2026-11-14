@@ -1,9 +1,9 @@
 {
   "name": "chess-evolution-online",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Real-time multiplayer chess with cumulative inherited movement powers.",
+  "description": "Chess Evolution: online and local multiplayer chess with deduplicated inherited movement, capture lineage trees, and match statistics.",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",

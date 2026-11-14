@@ -65,6 +65,11 @@
             <div class="local-play-heading"><span>PASS &amp; PLAY</span><span>ONE DEVICE</span></div>
             <label class="field-label" for="localOpponentName">SECOND PLAYER NAME</label>
             <input id="localOpponentName" class="text-field" maxlength="18" placeholder="Player 2" value="Player 2" autocomplete="off" />
+            <label class="field-label local-orientation-label" for="localOrientationSelect">BOARD ORIENTATION</label>
+            <select id="localOrientationSelect" class="text-field orientation-select">
+              <option value="rotate">Rotate toward the player whose turn it is</option>
+              <option value="fixed">Keep the board fixed (White at bottom)</option>
+            </select>
             <button id="localPlayBtn" class="local-play-button" type="button"><span>PLAY LOCALLY</span><b>♟</b></button>
             <p class="local-play-caption">Take turns on the same phone, tablet, or computer. No internet connection is needed for local matches once the app is loaded.</p>
           </div>
@@ -97,7 +102,7 @@
               <div class="player-identity"><span id="selfAvatar" class="player-avatar white-avatar">♔</span><div><strong id="selfName">You</strong><small id="selfMeta">WHITE · YOU</small></div></div>
               <span class="you-tag">YOU</span>
             </div>
-            <div class="board-hint"><span class="hint-dot"></span> Select a piece, then a highlighted square to move.</div>
+            <div class="board-hint"><span><span class="hint-dot"></span> Select a piece, then a highlighted square to move.</span><div class="board-tools"><button id="orientationBtn" class="visual-style-button hidden" type="button">BOARD: AUTO</button><button id="visualStyleBtn" class="visual-style-button" type="button">VISUAL: ICONS</button></div></div>
           </div>
 
           <aside class="game-sidebar">
@@ -106,6 +111,7 @@
               <div class="turn-status"><span id="turnIcon" class="turn-icon white-turn">♔</span><div><small id="turnLabel">WHITE TO MOVE</small><strong id="turnHeadline">Your move.</strong></div></div>
               <div id="statusSubline" class="status-subline">Capture to evolve your pieces.</div>
               <button id="newGameBtn" class="subtle-button hidden" type="button">PLAY AGAIN ↗</button>
+              <div id="matchStats" class="match-stats hidden"></div>
             </section>
 
             <section class="detail-card" id="pieceDetailCard">

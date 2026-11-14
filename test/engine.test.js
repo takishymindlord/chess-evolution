@@ -11,6 +11,7 @@ function customState(pieces, turn = 'white') {
       color: piece.color,
       type: piece.type,
       powers: [...(piece.powers || [])],
+      captures: structuredClone(piece.captures || []),
       hasMoved: piece.hasMoved ?? true
     };
   }
@@ -39,10 +40,15 @@ test('captures inherit the victim type and its entire accumulated lineage', () =
     { x: 3, y: 6, color: 'black', type: 'rook' }
   ]);
   playMove(state, { x: 2, y: 7 }, { x: 2, y: 6 });
-  assert.deepEqual(state.board[6][2].powers, ['knight', 'bishop', 'bishop']);
+  assert.deepEqual(state.board[6][2].powers, ['knight', 'bishop']);
+  assert.equal(state.board[6][2].captures.length, 1);
+  assert.equal(state.board[6][2].captures[0].type, 'knight');
   playMove(state, { x: 3, y: 6 }, { x: 2, y: 6 });
   assert.equal(state.board[6][2].type, 'rook');
-  assert.deepEqual(state.board[6][2].powers, ['queen', 'knight', 'bishop', 'bishop']);
+  assert.deepEqual(state.board[6][2].powers, ['queen', 'knight', 'bishop']);
+  assert.equal(state.board[6][2].captures.length, 1);
+  assert.equal(state.board[6][2].captures[0].type, 'queen');
+  assert.equal(state.board[6][2].captures[0].captures[0].type, 'knight');
 });
 
 test('capturing an unpowered pawn grants no pawn movement', () => {
@@ -80,4 +86,37 @@ test('a pawn can use an inherited knight move while keeping its pawn identity', 
   assert.equal(pawn.type, 'pawn');
   assert.ok(pawn.powers.includes('knight'));
   assert.ok(getLegalMoves(state, 2, 3).some((move) => move.x === 3 && move.y === 1));
+});
+
+
+test('capturing a duplicate capability does not add a second copy', () => {
+  const state = customState([
+    { x: 7, y: 7, color: 'white', type: 'king' },
+    { x: 7, y: 0, color: 'black', type: 'king' },
+    { x: 2, y: 7, color: 'white', type: 'rook', powers: ['knight'] },
+    { x: 2, y: 6, color: 'black', type: 'knight' }
+  ]);
+  const { record } = playMove(state, { x: 2, y: 7 }, { x: 2, y: 6 });
+  assert.deepEqual(state.board[6][2].powers, ['knight']);
+  assert.deepEqual(record.inherited, []);
+  assert.equal(state.board[6][2].captures.length, 1);
+});
+
+test('a captured evolved piece transfers its nested capture tree', () => {
+  const state = customState([
+    { x: 7, y: 7, color: 'white', type: 'king' },
+    { x: 7, y: 0, color: 'black', type: 'king' },
+    { x: 2, y: 7, color: 'white', type: 'queen' },
+    { x: 2, y: 6, color: 'black', type: 'rook', powers: ['bishop'], captures: [
+      { id: 'victim-1', color: 'white', type: 'knight', powers: [], captures: [
+        { id: 'victim-2', color: 'black', type: 'bishop', powers: [], captures: [] }
+      ] }
+    ] }
+  ]);
+  playMove(state, { x: 2, y: 7 }, { x: 2, y: 6 });
+  const surviving = state.board[6][2];
+  assert.deepEqual(surviving.powers, ['rook', 'bishop']);
+  assert.equal(surviving.captures.length, 1);
+  assert.equal(surviving.captures[0].captures[0].type, 'knight');
+  assert.equal(surviving.captures[0].captures[0].captures[0].type, 'bishop');
 });
