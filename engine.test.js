@@ -134,3 +134,15 @@ test('a captured evolved piece transfers its nested capture tree', () => {
   assert.equal(surviving.captures[0].captures[0].type, 'knight');
   assert.equal(surviving.captures[0].captures[0].captures[0].type, 'bishop');
 });
+
+
+test('Fool’s Mate sets a terminal checkmate state and black as winner', () => {
+  const state = createInitialState();
+  playMove(state, { x: 5, y: 6 }, { x: 5, y: 5 }); // f2-f3
+  playMove(state, { x: 4, y: 1 }, { x: 4, y: 3 }); // e7-e5
+  playMove(state, { x: 6, y: 6 }, { x: 6, y: 4 }); // g2-g4
+  playMove(state, { x: 3, y: 0 }, { x: 7, y: 4 }); // Qd8-h4#
+  assert.equal(state.gameOver, true);
+  assert.equal(state.status, 'checkmate');
+  assert.equal(state.winner, 'black');
+});

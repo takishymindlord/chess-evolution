@@ -1,5 +1,6 @@
 import { createInitialState, getLegalMoves, PIECE_NAMES, playMove } from './engine.js';
 import { mergedPieceSvg } from './merged-art.js';
+import { getPieceVisualMode } from './piece-visuals.js';
 
 const $ = (id) => document.getElementById(id);
 const socket = typeof window.io === 'function' ? window.io({ transports: ['websocket', 'polling'] }) : null;
@@ -87,7 +88,7 @@ function clearSession() {
 
 function startLocalGame() {
   endPopupShown = false;
-  $('matchEndModal').classList.add('hidden');
+  closeMatchEndDialog();
   gameMode = 'local';
   roomCode = null;
   myColor = 'white';
@@ -127,7 +128,7 @@ function joinRoom() {
 
 function enterRoom(payload) {
   endPopupShown = false;
-  $('matchEndModal').classList.add('hidden');
+  closeMatchEndDialog();
   gameMode = 'online';
   roomCode = payload.code;
   myColor = payload.color;
@@ -169,7 +170,7 @@ function leaveRoom() {
   roomCode = null;
   myColor = null;
   endPopupShown = false;
-  $('matchEndModal').classList.add('hidden');
+  closeMatchEndDialog();
   gameMode = 'online';
   gameState = null;
   players = { white: null, black: null };
@@ -222,12 +223,15 @@ function renderBoard() {
     const leftFile = perspective === 'black' ? x === 7 : x === 0;
     const capabilities = piece ? pieceCapabilities(piece) : [];
     const isHybrid = capabilities.length > 0;
+    const visualMode = piece ? getPieceVisualMode(piece, visualStyle) : 'icons';
     const identityMarkup = piece
-      ? (visualStyle === 'merged' && isHybrid
-        ? makeMergedVisual(piece)
-        : `<span class="piece-glyph">${glyphs[piece.color][piece.type]}</span>${isHybrid ? makePowerBadges(piece) : ''}`)
+      ? (visualMode === 'star'
+        ? makeMaximumHybridStar(piece)
+        : (visualMode === 'merged'
+          ? makeMergedVisual(piece)
+          : `<span class="piece-glyph">${glyphs[piece.color][piece.type]}</span>${isHybrid ? makePowerBadges(piece) : ''}`))
       : '';
-    const pieceMarkup = piece ? `<span class="piece ${piece.color} ${isHybrid ? 'hybrid' : ''} ${visualStyle === 'merged' ? 'merged-style' : ''}">${isHybrid ? '<span class="piece-halo"></span>' : ''}${identityMarkup}</span>` : '';
+    const pieceMarkup = piece ? `<span class="piece ${piece.color} ${isHybrid ? 'hybrid' : ''} ${visualMode === 'merged' ? 'merged-style' : ''} ${visualMode === 'star' ? 'max-hybrid-style' : ''}">${isHybrid ? '<span class="piece-halo"></span>' : ''}${identityMarkup}</span>` : '';
     return `<button class="${squareClass}" data-x="${x}" data-y="${y}" type="button" role="gridcell" aria-label="${squareName(x,y)}${piece ? ` ${piece.color} ${piece.type}` : ''}${isLegal ? ', legal move' : ''}">${pieceMarkup}${bottomRank ? `<span class="coord-file">${'abcdefgh'[x]}</span>` : ''}${leftFile ? `<span class="coord-rank">${8-y}</span>` : ''}</button>`;
   }).join('');
   board.querySelectorAll('.square').forEach((square) => {
@@ -243,6 +247,11 @@ function pieceCapabilities(piece) {
   return [...new Set(piece.powers || [])]
     .filter((type) => type !== 'pawn' && type !== 'king' && type !== piece.type)
     .sort((a, b) => powerSort.indexOf(a) - powerSort.indexOf(b));
+}
+
+function makeMaximumHybridStar(piece) {
+  const colorLabel = piece.color === 'white' ? 'white' : 'black';
+  return `<span class="merged-emblem merged-star max-hybrid-star" role="img" aria-label="Maximum hybrid ${colorLabel} piece" title="Maximum hybrid · all four special movement capabilities"><span>✦</span></span>`;
 }
 
 function makePowerBadges(piece) {
@@ -491,7 +500,8 @@ function renderMatchStats() {
 
 function showMatchEndDialog() {
   if (!gameState?.gameOver || endPopupShown) return;
-  endPopupShown = true;
+
+  const modal = $('matchEndModal');
   const winnerColor = gameState.winner;
   const winner = winnerColor ? (players[winnerColor]?.name || (winnerColor === 'white' ? 'White' : 'Black')) : null;
   $('matchEndEyebrow').textContent = gameState.status === 'checkmate' ? 'CHECKMATE' : 'STALEMATE';
@@ -502,11 +512,22 @@ function showMatchEndDialog() {
   $('endStatisticsContent').innerHTML = $('matchStats').innerHTML;
   $('endAnnouncementView').classList.remove('hidden');
   $('endStatisticsView').classList.add('hidden');
-  $('matchEndModal').classList.remove('hidden');
+
+  // Native <dialog> is rendered in the browser top layer, avoiding the
+  // stacking/visibility problems that affected the old div-based popup.
+  endPopupShown = true;
+  if (typeof modal.showModal === 'function') {
+    if (!modal.open) modal.showModal();
+  } else {
+    modal.setAttribute('open', '');
+  }
 }
 
 function closeMatchEndDialog() {
-  $('matchEndModal').classList.add('hidden');
+  const modal = $('matchEndModal');
+  if (!modal) return;
+  if (typeof modal.close === 'function' && modal.open) modal.close();
+  else modal.removeAttribute('open');
 }
 
 function openEndStatistics() {
@@ -599,6 +620,17 @@ if (socket) {
     }
     renderGame();
   });
+  socket.on('match-ended', (payload) => {
+    if (payload.code !== roomCode || !payload.state?.gameOver) return;
+    gameState = payload.state;
+    players = payload.players || players;
+    presence = payload.presence || presence;
+    selected = null;
+    legalMoves = [];
+    renderGame();
+    // Explicit terminal event is a second, authoritative signal for both clients.
+    showMatchEndDialog();
+  });
   socket.on('room-presence', updatePresence);
   socket.on('room-closed', (message) => {
     roomCode = null;
@@ -615,7 +647,7 @@ if (socket) {
   socket.on('match-restarted', (payload) => {
     if (payload.code !== roomCode) return;
     endPopupShown = false;
-    $('matchEndModal').classList.add('hidden');
+    closeMatchEndDialog();
     gameState = payload.state;
     selected = null;
     legalMoves = [];
@@ -660,7 +692,7 @@ $('leaveRoomBtn').addEventListener('click', leaveRoom);
 $('newGameBtn').addEventListener('click', () => {
   if (gameMode === 'local') {
     endPopupShown = false;
-    $('matchEndModal').classList.add('hidden');
+    closeMatchEndDialog();
     gameState = createInitialState();
     selected = null;
     legalMoves = [];
@@ -676,6 +708,10 @@ $('backToEndAnnouncementBtn').addEventListener('click', backToEndAnnouncement);
 $('closeEndStatsBtn').addEventListener('click', closeMatchEndDialog);
 $('matchEndModal').addEventListener('click', (event) => {
   if (event.target === $('matchEndModal')) closeMatchEndDialog();
+});
+$('matchEndModal').addEventListener('close', () => {
+  // Closing the announcement never resets endPopupShown; it stays dismissed
+  // until a genuinely new match starts.
 });
 updateVisualStyleControls();
 $('promotionModal').querySelectorAll('[data-promotion]').forEach((button) => {

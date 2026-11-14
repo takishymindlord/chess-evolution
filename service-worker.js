@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chess-evolution-static-v4';
+const CACHE_NAME = 'chess-evolution-static-v5';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -6,6 +6,7 @@ const APP_SHELL = [
   '/app.js',
   '/engine.js',
   '/merged-art.js',
+  '/piece-visuals.js',
   '/manifest.webmanifest',
   '/icons/icon.svg',
   '/icons/icon-192.png',

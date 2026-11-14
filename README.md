@@ -1,4 +1,4 @@
-# Chess Evolution v1.4.0
+# Chess Evolution v1.5.0
 
 Chess Evolution is a browser chess game with cumulative capture inheritance, online room-based multiplayer, and local pass-and-play.
 
@@ -64,8 +64,8 @@ Render web services support server-side applications and WebSockets. Free instan
 - A pawn retains its own pawn rules while adding inherited rook, bishop, knight, or queen movement.
 - Capabilities are stored as a set: capturing another piece with an already-owned movement type does not add a duplicate capability or a duplicate badge. A piece also does not display its own native movement as an inherited badge.
 - Select any piece to open its **Capture History** tree. It shows the pieces that unit captured and nested branches from captured pieces that had captured others. When an evolved piece is captured, its complete nested capture tree moves with it to the capturing piece.
-- The merged star emblem appears when a unit has all four special movement types: queen, rook, bishop, and knight.
-- At checkmate or stalemate, a result popup announces the winner (or draw). Players can close it or open the statistics view, which shows each side's moves, captures, newly acquired abilities, promotions, and most-evolved surviving unit.
+- The maximum-hybrid star appears in both Icons and Merged visual modes when a unit has all four special movement types: queen, rook, bishop, and knight.
+- At checkmate or stalemate, a native browser result dialog announces the winner (or draw) for local games and both online players. Players can close it or open the statistics view, which shows each side's moves, captures, newly acquired abilities, promotions, and most-evolved surviving unit.
 - Standard king safety, check, checkmate, stalemate, castling, en passant, and promotion are included.
 
 
@@ -76,3 +76,11 @@ Render web services support server-side applications and WebSockets. Free instan
 - Added a modal match-end announcement for checkmate and stalemate, with **View Statistics** and **Close** actions. The statistics view can return to the result announcement or close back to the board.
 - Updated the service-worker cache to `v4` and precached the new art module so installed PWA clients receive the new renderer.
 - Automated coverage includes fused-art combinations, the maximum star, and the immutable king.
+
+
+## Version 1.5.0 updates
+
+- Maximum hybrids (Queen, Rook, Bishop and Knight capabilities together) use the star mark in both Icons and Merged visual modes.
+- Match completion opens a native browser modal with the winner/draw announcement and a Statistics or Close choice. Online matches broadcast an explicit `match-ended` event to both players.
+- Front page credit: Created by TakishyMindlord Labs.
+- PWA cache version bumped to v5 and includes the new `piece-visuals.js` module.

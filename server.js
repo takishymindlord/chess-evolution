@@ -165,12 +165,16 @@ io.on('connection', (socket) => {
     }
     try {
       playMove(room.state, from, to, promotion);
-      io.to(code).emit('game-state', {
+      const update = {
         code,
         state: room.state,
         players: publicPlayers(room),
         presence: presenceFor(room)
-      });
+      };
+      io.to(code).emit('game-state', update);
+      // Send an explicit terminal event as well as the regular state update so
+      // both clients always run the winner dialog when checkmate/stalemate occurs.
+      if (room.state.gameOver) io.to(code).emit('match-ended', update);
     } catch (error) {
       socket.emit('move-error', error instanceof Error ? error.message : 'That move could not be completed.');
     }
