@@ -166,3 +166,32 @@ test('bulk attack maps match square-by-square attack detection for evolved piece
     }
   }
 });
+
+test('the rules engine ends a game automatically on the third occurrence of a position', () => {
+  const state = createInitialState();
+  const cycle = [
+    [{ x: 6, y: 7 }, { x: 5, y: 5 }], // White Ng1-f3
+    [{ x: 6, y: 0 }, { x: 5, y: 2 }], // Black Ng8-f6
+    [{ x: 5, y: 5 }, { x: 6, y: 7 }], // White Nf3-g1
+    [{ x: 5, y: 2 }, { x: 6, y: 0 }]  // Black Nf6-g8
+  ];
+  for (let repetition = 0; repetition < 2; repetition += 1) {
+    for (const [from, to] of cycle) playMove(state, from, to);
+  }
+  assert.equal(state.gameOver, true);
+  assert.equal(state.status, 'threefold-repetition');
+  assert.equal(state.winner, null);
+});
+
+test('the rules engine ends a game after 100 half-moves without a pawn move or capture', () => {
+  const state = customState([
+    { x: 4, y: 7, color: 'white', type: 'king' },
+    { x: 4, y: 0, color: 'black', type: 'king' },
+    { x: 3, y: 4, color: 'white', type: 'rook' }
+  ]);
+  state.halfmoveClock = 99;
+  playMove(state, { x: 3, y: 4 }, { x: 3, y: 3 });
+  assert.equal(state.halfmoveClock, 100);
+  assert.equal(state.gameOver, true);
+  assert.equal(state.status, 'fifty-move-rule');
+});

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "generation": 1,
+  "trainedGames": 200,
+  "trainedPositions": 12445,
+  "updatedAt": "2026-11-14T21:38:34.058Z",
+  "algorithm": "mini-batch logistic regression over engine evaluation features",
+  "weights": {
+    "material": 0.84191,
+    "inheritance": 0.97185,
+    "synergy": 0.97345,
+    "center": 0.99814,
+    "pawnAdvance": 0.99865,
+    "exposure": 1.0059,
+    "protection": 0.99928,
+    "forks": 0.99976,
+    "kingSafety": 0.99791
+  }
+}

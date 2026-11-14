@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chess-evolution-static-v7';
+const CACHE_NAME = 'chess-evolution-static-v10';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -35,6 +35,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
   // Never cache live Socket.IO polling/event traffic; only its browser client script is app-shell content.
   if (url.pathname.startsWith('/socket.io/') && url.pathname !== '/socket.io/socket.io.js') return;
   if (url.pathname === '/health') return;

@@ -1,14 +1,15 @@
 {
   "name": "chess-evolution-online",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": true,
   "type": "module",
-  "description": "Chess Evolution with cumulative inheritance, tactical AI, and a local self-play tournament/data-generation lab.",
+  "description": "Chess Evolution with self-play, repetition-aware AI, concurrent training, and a persistent learned evaluation model.",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test",
-    "selfplay": "node scripts/self-play.js"
+    "selfplay": "node scripts/self-play.js",
+    "train": "node scripts/train.js"
   },
   "engines": {
     "node": ">=22 <27"

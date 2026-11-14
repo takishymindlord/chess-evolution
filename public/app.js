@@ -31,10 +31,17 @@ let aiWorker = null;
 let aiRequestId = 0;
 let aiThinking = false;
 let aiDifficulty = 'medium';
+let aiWatchWhiteDifficulty = 'medium';
+let aiWatchBlackDifficulty = 'medium';
+let aiWatchDelayMs = 500;
+let aiWatchTimer = null;
+let learnedEvaluationModel = null;
+let trainingPollTimer = null;
 
 function invalidateAiSearch() {
   aiRequestId += 1;
   aiThinking = false;
+  if (aiWatchTimer) { clearTimeout(aiWatchTimer); aiWatchTimer = null; }
   // Terminating the worker cancels any search that is still running, so an
   // abandoned position cannot delay the next match's opening calculation.
   if (aiWorker) {
@@ -50,7 +57,7 @@ function getAiWorker() {
   aiWorker.addEventListener('message', handleAiWorkerMessage);
   aiWorker.addEventListener('error', (event) => {
     aiThinking = false;
-    if (gameMode === 'computer' && gameState && !gameState.gameOver) {
+    if ((gameMode === 'computer' || gameMode === 'aiwatch') && gameState && !gameState.gameOver) {
       renderStatus();
       toast(`The computer engine encountered an error: ${event.message || 'unknown worker error'}`);
     }
@@ -72,6 +79,8 @@ function searchSnapshot(state) {
     turn: state.turn,
     enPassant: state.enPassant ? { ...state.enPassant } : null,
     moveNumber: state.moveNumber,
+    halfmoveClock: state.halfmoveClock || 0,
+    positionCounts: state.positionCounts || {},
     status: state.status,
     winner: null,
     check: state.check,
@@ -90,7 +99,8 @@ function requestComputerMove() {
       type: 'search',
       requestId,
       difficulty: aiDifficulty,
-      state: searchSnapshot(gameState)
+      state: searchSnapshot(gameState),
+      model: learnedEvaluationModel
     });
   } catch (error) {
     aiThinking = false;
@@ -101,7 +111,7 @@ function requestComputerMove() {
 
 function handleAiWorkerMessage(event) {
   const message = event.data || {};
-  if (message.requestId !== aiRequestId || gameMode !== 'computer' || !gameState || gameState.gameOver) return;
+  if (message.requestId !== aiRequestId || !['computer', 'aiwatch'].includes(gameMode) || !gameState || gameState.gameOver) return;
   aiThinking = false;
   if (message.error) {
     renderStatus();
@@ -123,6 +133,9 @@ function handleAiWorkerMessage(event) {
       toast(`Evolution AI inherited ${record.inherited.map((type) => PIECE_NAMES[type]).join(' + ')}.`);
     } else {
       toast('Evolution AI played a move.');
+    }
+    if (gameMode === 'aiwatch' && !gameState.gameOver) {
+      aiWatchTimer = setTimeout(() => { aiWatchTimer = null; requestAiWatchMove(); }, aiWatchDelayMs);
     }
   } catch (error) {
     renderStatus();
@@ -244,6 +257,53 @@ function startComputerGame() {
   renderGame();
   toast(`Playing as ${myColor}. Evolution AI is ${myColor === 'white' ? 'Black' : 'White'}.`);
   if (gameState.turn !== myColor) requestComputerMove();
+}
+
+function startAiWatchGame() {
+  invalidateAiSearch();
+  endPopupShown = false;
+  closeMatchEndDialog();
+  gameMode = 'aiwatch';
+  roomCode = null;
+  myColor = 'white';
+  aiWatchWhiteDifficulty = ['beginner', 'easy', 'medium', 'hard', 'expert'].includes($('aiWatchWhiteSelect').value) ? $('aiWatchWhiteSelect').value : 'medium';
+  aiWatchBlackDifficulty = ['beginner', 'easy', 'medium', 'hard', 'expert'].includes($('aiWatchBlackSelect').value) ? $('aiWatchBlackSelect').value : 'medium';
+  aiWatchDelayMs = Number($('aiWatchSpeedSelect').value) || 500;
+  gameState = createInitialState();
+  players = {
+    white: { name: `Evolution AI · ${aiWatchWhiteDifficulty.toUpperCase()}` },
+    black: { name: `Evolution AI · ${aiWatchBlackDifficulty.toUpperCase()}` }
+  };
+  presence = { white: true, black: true };
+  selected = null;
+  legalMoves = [];
+  pendingPromotion = null;
+  clearSession();
+  $('roomCodeLabel').textContent = 'AI VS AI';
+  $('roomChipLabel').textContent = 'MODE';
+  $('matchModeLabel').textContent = `AI VS AI · ${aiWatchWhiteDifficulty.toUpperCase()} / ${aiWatchBlackDifficulty.toUpperCase()}`;
+  $('copyRoomBtn').classList.add('hidden');
+  setConnection(false, 'AI LAB');
+  setScreen('game');
+  renderGame();
+  toast('Evolution AI vs Evolution AI started.');
+  requestAiWatchMove();
+}
+
+function requestAiWatchMove() {
+  if (gameMode !== 'aiwatch' || !gameState || gameState.gameOver || aiThinking) return;
+  try {
+    const worker = getAiWorker();
+    aiThinking = true;
+    const requestId = ++aiRequestId;
+    renderStatus();
+    const difficulty = gameState.turn === 'white' ? aiWatchWhiteDifficulty : aiWatchBlackDifficulty;
+    worker.postMessage({ type: 'search', requestId, difficulty, state: searchSnapshot(gameState), model: learnedEvaluationModel });
+  } catch (error) {
+    aiThinking = false;
+    renderStatus();
+    toast(error instanceof Error ? error.message : 'The AI watch mode could not start.');
+  }
 }
 
 function createRoom() {
@@ -436,7 +496,7 @@ function findKing(state, color) {
 }
 
 function onSquareClick(x, y) {
-  if (!gameState || (gameMode === 'online' && !players.black)) return;
+  if (!gameState || gameMode === 'aiwatch' || (gameMode === 'online' && !players.black)) return;
   const allowedColor = gameMode === 'local' ? gameState.turn : myColor;
   const canMoveNow = !gameState.gameOver && gameState.turn === allowedColor;
   const clicked = gameState.board[y][x];
@@ -525,7 +585,21 @@ function renderPlayers() {
     $('selfStrip').querySelector('.you-tag').textContent = bottomColor === gameState.turn ? 'TO MOVE' : 'BOTTOM';
     return;
   }
-  $('selfStrip').querySelector('.you-tag').textContent = 'YOU';
+  $('selfStrip').querySelector('.you-tag').textContent = gameMode === 'aiwatch' ? 'WATCHING' : 'YOU';
+
+  if (gameMode === 'aiwatch') {
+    $('selfName').textContent = players.white?.name || 'Evolution AI';
+    $('selfMeta').textContent = `WHITE · AI · ${gameState.captured?.white?.length || 0} CAPTURES`;
+    $('selfAvatar').textContent = glyphs.white.king;
+    $('selfAvatar').className = 'player-avatar white-avatar';
+    $('opponentName').textContent = players.black?.name || 'Evolution AI';
+    $('opponentMeta').textContent = `BLACK · AI · ${gameState.captured?.black?.length || 0} CAPTURES`;
+    $('opponentAvatar').textContent = glyphs.black.king;
+    $('opponentAvatar').className = 'player-avatar black-avatar';
+    $('opponentPresence').classList.add('online');
+    $('opponentPresence').classList.remove('offline');
+    return;
+  }
 
   const isComputer = gameMode === 'computer';
   const opponentColor = myColor === 'white' ? 'black' : 'white';
@@ -546,15 +620,17 @@ function renderPlayers() {
 function renderStatus() {
   const isLocal = gameMode === 'local';
   const isComputer = gameMode === 'computer';
+  const isAiWatch = gameMode === 'aiwatch';
   const yourTurn = gameState.turn === myColor;
   const activeName = gameState.turn === 'white' ? 'White' : 'Black';
   const headline = $('turnHeadline');
   const label = $('turnLabel');
   const icon = $('turnIcon');
   const subline = $('statusSubline');
-  const isWaiting = !isLocal && !isComputer && !players.black;
+  const isWaiting = !isLocal && !isComputer && !isAiWatch && !players.black;
   const checkmate = gameState.status === 'checkmate';
   const stalemate = gameState.status === 'stalemate';
+  const drawn = gameState.gameOver && !gameState.winner;
   icon.textContent = glyphs[gameState.turn].king;
   icon.className = `turn-icon ${gameState.turn === 'white' ? 'white-turn' : 'black-turn'}`;
   $('newGameBtn').classList.toggle('hidden', !gameState.gameOver);
@@ -563,14 +639,20 @@ function renderStatus() {
     label.textContent = 'ROOM OPEN';
     headline.textContent = 'Waiting for player…';
     subline.textContent = `Share room ${roomCode} with a friend to begin.`;
+  } else if (isAiWatch && !checkmate && !stalemate && !gameState.gameOver) {
+    label.textContent = `${gameState.turn.toUpperCase()} AI TO MOVE`;
+    headline.textContent = `${gameState.turn === 'white' ? players.white?.name : players.black?.name} thinking…`;
+    subline.textContent = aiThinking ? 'The AI is calculating the next move.' : 'The next move will play automatically.';
   } else if (checkmate) {
     label.textContent = 'CHECKMATE';
     headline.textContent = isLocal ? `${gameState.winner === 'white' ? 'White' : 'Black'} wins.` : (gameState.winner === myColor ? 'You won.' : (isComputer ? 'Evolution AI wins.' : 'You were defeated.'));
     subline.textContent = 'The king has no safe escape. The match is complete.';
-  } else if (stalemate) {
-    label.textContent = 'STALEMATE';
+  } else if (drawn) {
+    label.textContent = gameState.status === 'threefold-repetition' ? 'THREEFOLD REPETITION' : (gameState.status === 'fifty-move-rule' ? '50-MOVE RULE' : 'STALEMATE');
     headline.textContent = 'A drawn match.';
-    subline.textContent = 'No legal moves remain, but the king is not in check.';
+    subline.textContent = gameState.status === 'threefold-repetition'
+      ? 'The same full position appeared three times.'
+      : (gameState.status === 'fifty-move-rule' ? '100 half-moves passed without a pawn move or capture.' : 'No legal moves remain, but the king is not in check.');
   } else if (gameState.check) {
     label.textContent = `${gameState.check.toUpperCase()} KING IN CHECK`;
     headline.textContent = isLocal ? `${gameState.check === 'white' ? 'White' : 'Black'} king is under attack.` : (gameState.check === myColor ? 'Your king is under attack.' : (isComputer ? 'Evolution AI is in check.' : 'Opponent is in check.'));
@@ -586,7 +668,7 @@ function renderStatus() {
   const last = gameState.history.at(-1);
   if (!gameState.gameOver && last?.inherited?.length) {
     const names = [...new Set(last.inherited)].map((type) => PIECE_NAMES[type]).join(', ');
-    const playerLabel = isLocal ? (last.color === 'white' ? 'White' : 'Black') : (last.color === myColor ? 'You' : (isComputer ? 'Evolution AI' : 'Opponent'));
+    const playerLabel = isLocal ? (last.color === 'white' ? 'White' : 'Black') : (isAiWatch ? (last.color === 'white' ? players.white?.name || 'White AI' : players.black?.name || 'Black AI') : (last.color === myColor ? 'You' : (isComputer ? 'Evolution AI' : 'Opponent')));
     subline.textContent = `${playerLabel} inherited ${names} power${last.inherited.length > 1 ? 's' : ''}.`;
   }
   if (isWaiting) $('newGameBtn').classList.add('hidden');
@@ -632,7 +714,7 @@ function renderMatchStats() {
     ? `${gameState.winner === 'white' ? (players.white?.name || 'White') : (players.black?.name || 'Black')} won`
     : 'Draw';
   const statColumn = (color, data) => `<div class="stats-player"><b>${color === 'white' ? 'WHITE' : 'BLACK'} · ${escapeHtml(players[color]?.name || (color === 'white' ? 'White' : 'Black'))}</b><span>${data.moves} moves</span><span>${data.captures} captures</span><span>${data.abilities} new abilities</span><span>${data.promotions} promotions</span><small>${data.mostEvolved ? `Most evolved: ${PIECE_NAMES[data.mostEvolved.piece.type]} (${data.mostEvolved.value} capabilities)` : 'No surviving pieces'}</small></div>`;
-  panel.innerHTML = `<div class="stats-heading"><b>MATCH STATISTICS</b><strong>${escapeHtml(result)}</strong></div><div class="stats-total"><span>${history.length} total plies</span><span>${gameState.status === 'checkmate' ? 'Checkmate' : 'Stalemate'}</span></div><div class="stats-columns">${statColumn('white', white)}${statColumn('black', black)}</div>`;
+  panel.innerHTML = `<div class="stats-heading"><b>MATCH STATISTICS</b><strong>${escapeHtml(result)}</strong></div><div class="stats-total"><span>${history.length} total plies</span><span>${gameState.status === 'checkmate' ? 'Checkmate' : (gameState.status === 'threefold-repetition' ? 'Threefold repetition' : (gameState.status === 'fifty-move-rule' ? '50-move rule' : 'Stalemate'))}</span></div><div class="stats-columns">${statColumn('white', white)}${statColumn('black', black)}</div>`;
   // Statistics are deliberately opened from the match-end dialog, not
   // permanently exposed in the sidebar underneath the board.
   panel.classList.add('hidden');
@@ -644,11 +726,17 @@ function showMatchEndDialog() {
   const modal = $('matchEndModal');
   const winnerColor = gameState.winner;
   const winner = winnerColor ? (players[winnerColor]?.name || (winnerColor === 'white' ? 'White' : 'Black')) : null;
-  $('matchEndEyebrow').textContent = gameState.status === 'checkmate' ? 'CHECKMATE' : 'STALEMATE';
+  const drawMessages = {
+    stalemate: 'No legal moves remain, but the king is not in check.',
+    'threefold-repetition': 'The same position occurred three times. The match is drawn.',
+    'fifty-move-rule': '100 half-moves passed without a pawn move or capture. The match is drawn.'
+  };
+  const terminalLabel = gameState.status === 'checkmate' ? 'CHECKMATE' : (gameState.status === 'stalemate' ? 'STALEMATE' : 'DRAW');
+  $('matchEndEyebrow').textContent = terminalLabel;
   $('matchEndTitle').textContent = winner ? `${winner} wins!` : 'The match is a draw';
   $('matchEndMessage').textContent = gameState.status === 'checkmate'
     ? `${winner || 'The winner'} delivered checkmate. The king has no legal escape.`
-    : 'No legal moves remain, but the king is not in check. The match is drawn.';
+    : (drawMessages[gameState.status] || 'The match ended in a draw.');
   $('endStatisticsContent').innerHTML = $('matchStats').innerHTML;
   $('endAnnouncementView').classList.remove('hidden');
   $('endStatisticsView').classList.add('hidden');
@@ -708,6 +796,111 @@ function updatePresence(payload) {
   presence = payload.presence || presence;
   renderPlayers();
   renderStatus();
+}
+
+function renderTrainingStatus(status) {
+  const phase = $('trainingPhase');
+  if (!phase) return;
+  const active = Boolean(status?.running);
+  const phaseLabels = {
+    idle: 'READY', 'self-play': 'GENERATING SELF-PLAY DATA',
+    training: 'TRAINING EVALUATION WEIGHTS', stopping: 'STOPPING AFTER CURRENT GAMES',
+    complete: 'GENERATION COMPLETE', error: 'TRAINING ERROR'
+  };
+  phase.textContent = status?.enabled === false ? 'TRAINING DISABLED ON THIS SERVER' : (phaseLabels[status?.phase] || 'READY');
+  $('trainingProgressFill').style.width = `${Math.max(0, Math.min(100, Number(status?.progress) || 0))}%`;
+  $('trainingProgressText').textContent = status?.phase === 'training'
+    ? 'Dataset collected · fitting model weights…'
+    : `${status?.gamesCompleted || 0} / ${status?.games || 0} games · ${status?.progress || 0}%`;
+  $('trainingGeneration').textContent = String(status?.modelGeneration ?? status?.generation ?? 0).padStart(3, '0');
+  $('trainingPositions').textContent = Number(status?.positionsCollected || 0).toLocaleString();
+  $('trainingCaptures').textContent = Number(status?.captures || 0).toLocaleString();
+  $('trainingEvolutionEvents').textContent = Number(status?.inheritedAbilities || 0).toLocaleString();
+  $('trainingResults').textContent = `${status?.whiteWins || 0}W · ${status?.draws || 0}D · ${status?.blackWins || 0}B`;
+  $('startTrainingBtn').disabled = active || status?.enabled === false;
+  $('stopTrainingBtn').classList.toggle('hidden', !active);
+  $('trainingError').textContent = status?.error || '';
+  $('trainingOutput').textContent = status?.outputDirectory ? `SAVED: ${status.outputDirectory}` : '';
+  if (status?.metrics) {
+    const baseline = status.metrics.baselineValidationLoss;
+    const validation = status.metrics.validationLoss;
+    const change = status.metrics.validationImproved ? 'validation loss improved' : 'validation loss not improved yet';
+    $('trainingMetrics').textContent = `Training positions ${Number(status.metrics.trainingSamples).toLocaleString()} · validation ${Number(status.metrics.validationSamples).toLocaleString()} · loss ${baseline} → ${validation} (${change})`;
+  } else {
+    $('trainingMetrics').textContent = 'Model: nine learned evaluation weights · awaiting first generation';
+  }
+  const weights = status?.weights || learnedEvaluationModel?.weights;
+  if (weights) {
+    $('trainingWeights').textContent = Object.entries(weights)
+      .map(([name, value]) => `${name}: ${Number(value).toFixed(3)}`)
+      .join('  ·  ');
+  }
+}
+
+async function refreshTrainingStatus() {
+  try {
+    const [statusResponse, modelResponse] = await Promise.all([
+      fetch('/api/training/status', { cache: 'no-store' }),
+      fetch('/api/training/model', { cache: 'no-store' })
+    ]);
+    let currentStatus = null;
+    if (statusResponse.ok) {
+      currentStatus = await statusResponse.json();
+      renderTrainingStatus(currentStatus);
+    }
+    if (modelResponse.ok) {
+      const modelData = await modelResponse.json();
+      if (modelData?.schemaVersion === 1) learnedEvaluationModel = modelData;
+    }
+    if (trainingPollTimer) clearTimeout(trainingPollTimer);
+    // Poll continuously only while a generation is active. When idle or done,
+    // keep the displayed status but avoid needless network requests.
+    trainingPollTimer = currentStatus?.running
+      ? setTimeout(refreshTrainingStatus, 1600)
+      : null;
+    return currentStatus;
+  } catch {
+    $('trainingPhase').textContent = 'LOCAL TRAINING API UNAVAILABLE';
+    if (trainingPollTimer) clearTimeout(trainingPollTimer);
+    trainingPollTimer = setTimeout(refreshTrainingStatus, 6000);
+    return null;
+  }
+}
+
+async function startTraining() {
+  const button = $('startTrainingBtn');
+  button.disabled = true;
+  $('trainingError').textContent = '';
+  try {
+    const response = await fetch('/api/training/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        games: Number($('trainingGamesSelect').value) || 200,
+        workers: Number($('trainingWorkersSelect').value) || 4,
+        depth: Number($('trainingDepthSelect').value) || 2
+      })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not start training.');
+    renderTrainingStatus(result);
+    toast(`Generation ${result.generation} started with ${result.workers} workers.`);
+    refreshTrainingStatus();
+  } catch (error) {
+    button.disabled = false;
+    $('trainingError').textContent = error instanceof Error ? error.message : 'Could not start training.';
+  }
+}
+
+async function stopTraining() {
+  try {
+    const response = await fetch('/api/training/stop', { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not stop training.');
+    renderTrainingStatus(result);
+  } catch (error) {
+    $('trainingError').textContent = error instanceof Error ? error.message : 'Could not stop training.';
+  }
 }
 
 if (socket) {
@@ -802,6 +995,10 @@ if (socket) {
 $('createRoomBtn').addEventListener('click', createRoom);
 $('localPlayBtn').addEventListener('click', startLocalGame);
 $('computerPlayBtn').addEventListener('click', startComputerGame);
+$('aiWatchBtn').addEventListener('click', startAiWatchGame);
+$('startTrainingBtn').addEventListener('click', startTraining);
+$('stopTrainingBtn').addEventListener('click', stopTraining);
+refreshTrainingStatus();
 $('localOrientationSelect').value = localOrientation;
 $('localOrientationSelect').addEventListener('change', (event) => {
   localOrientation = event.target.value === 'fixed' ? 'fixed' : 'rotate';
@@ -833,6 +1030,10 @@ $('leaveRoomBtn').addEventListener('click', leaveRoom);
 $('newGameBtn').addEventListener('click', () => {
   if (gameMode === 'computer') {
     startComputerGame();
+    return;
+  }
+  if (gameMode === 'aiwatch') {
+    startAiWatchGame();
     return;
   }
   if (gameMode === 'local') {

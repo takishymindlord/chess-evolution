@@ -20,11 +20,31 @@ test('computer mode uses a worker and commits its response through the chess eng
   assert.match(app, /new Worker\('\/ai-worker\.js', \{ type: 'module'/);
   assert.match(app, /playMove\(gameState, move\.from, move\.to, 'queen'\)/);
   assert.match(app, /gameMode === 'computer'/);
-  assert.match(worker, /findBestMove\(state, AI_DEFAULTS\[difficulty\]\)/);
+  assert.match(worker, /findBestMove\(state, \{ \.\.\.AI_DEFAULTS\[difficulty\], model: model \|\| null \}\)/);
+});
+
+test('AI vs AI watch mode is exposed and uses the background search worker', () => {
+  assert.match(html, /id="aiWatchBtn"/);
+  assert.match(html, /id="aiWatchWhiteSelect"/);
+  assert.match(html, /id="aiWatchBlackSelect"/);
+  assert.match(html, /id="aiWatchSpeedSelect"/);
+  assert.match(app, /gameMode = 'aiwatch'/);
+  assert.match(app, /requestAiWatchMove\(\)/);
+  assert.match(app, /gameMode === 'aiwatch'/);
+  assert.match(app, /setTimeout\(\(\) => \{ aiWatchTimer = null; requestAiWatchMove\(\); \}, aiWatchDelayMs\)/);
 });
 
 test('PWA app shell precaches the AI engine and its worker', () => {
-  assert.match(serviceWorker, /chess-evolution-static-v7/);
+  assert.match(serviceWorker, /chess-evolution-static-v10/);
   assert.match(serviceWorker, /'\/ai\.js'/);
   assert.match(serviceWorker, /'\/ai-worker\.js'/);
+});
+
+test('Training Lab exposes parallel self-play settings, progress and stop controls', () => {
+  for (const id of ['trainingGamesSelect', 'trainingWorkersSelect', 'trainingDepthSelect', 'startTrainingBtn', 'stopTrainingBtn', 'trainingProgressFill', 'trainingPositions', 'trainingWeights']) {
+    assert.match(html, new RegExp(`id=\"${id}\"`));
+  }
+  assert.match(app, /api\/training\/start/);
+  assert.match(app, /api\/training\/status/);
+  assert.match(app, /api\/training\/model/);
 });

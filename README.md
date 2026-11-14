@@ -1,4 +1,6 @@
-# Chess Evolution v1.8.0
+# Chess Evolution v1.9.0
+
+> Updated v1.9.0 documentation. Older version notes below describe historical milestones; where they conflict with the current features, the v1.9.0 sections take precedence.
 
 Chess Evolution is a browser chess game with cumulative capture inheritance, online room-based multiplayer, and local pass-and-play.
 
@@ -136,4 +138,27 @@ Each run writes `games.jsonl`, `positions.jsonl`, `summary.json` and `manifest.j
 
 Draw protection in the runner includes threefold repetition, a 100-half-move quiet-move rule, and a configurable maximum-ply limit. These runner adjudications do not modify the browser chess rules.
 
-**Important:** This is a self-play data-generation milestone, not neural-network training. The four personalities are handcrafted evaluation-weight profiles. The generated data is saved for later analysis and possible neural-network training; the current AI's weights are not automatically updated. See `SELF-PLAY-LAB.md` for all command options and output schemas.
+**Historical note (v1.8.0):** At that milestone, the personality league only generated data and did not update AI weights. In v1.9.0, the separate `npm run train` pipeline and lobby Training Lab perform parallel self-play and fit a compact linear evaluation model. See `SELF-PLAY-LAB.md` for current instructions.
+
+
+## v1.9.0 — Repetition-safe play and real self-play training
+
+The browser rules engine now tracks rule-relevant position history and the half-move clock. Local, online, player-vs-AI and AI-vs-AI games automatically finish as a draw on threefold repetition or after 100 half-moves without a pawn move or capture. Position identity retains castling/pawn-move rights and inherited powers. The AI search also detects revisited positions and treats them as an undesirable draw line to discourage loops before the automatic draw triggers.
+
+The lobby now includes a **Self-Play Training Lab**. It launches multiple Node worker threads (limited by available CPU cores) to run the selected number of games in parallel. Each training game runs identical copies of the current agent against one another; this is separate from the four fixed strategy profiles used by the older CLI league. Every pre-move position is saved with nine white-perspective evaluation features and the final game result.
+
+After self-play, the trainer runs mini-batch logistic regression over those labeled positions and updates nine evaluation weights: material, inheritance, synergy, center control, pawn advancement, exposure, protection, forks, and king safety. The resulting compact linear evaluation model is saved to `data/training/current-model.json`, along with a generation-specific `games.jsonl`, `positions.jsonl`, `model.json`, and `summary.json`. Browser AI search loads the saved weights and uses them for subsequent games. This is supervised weight learning, not a deep neural network; a lower validation loss is a useful training signal, but it does not by itself prove a higher playing strength.
+
+To train from the browser, run `npm install`, `npm start`, open `http://localhost:3000`, and use **Self-Play Training Lab**. The recommended first run is 200 games, 4 workers, depth 2. The worker count is capped by available CPU cores. To use the same pipeline from a terminal, run:
+
+```bash
+npm run train -- --games 200 --workers 4 --depth 2
+```
+
+Use a smaller test run before a large session:
+
+```bash
+npm run train -- --games 8 --workers 2 --depth 1 --max-plies 30
+```
+
+Training data is local to the computer running the server. The API is enabled by default for local development. On a production deployment it is disabled unless `ENABLE_TRAINING_API=true` is explicitly configured, to avoid exposing a CPU-intensive training endpoint publicly.

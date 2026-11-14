@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { createInitialState, playMove } from './public/engine.js';
+import { trainingManager } from './scripts/training-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,8 +20,37 @@ const PORT = Number(process.env.PORT || 3000);
 const rooms = new Map();
 const socketRooms = new Map();
 
+app.use(express.json({ limit: '32kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'chess-evolution', rooms: rooms.size }));
+const trainingApiAllowed = process.env.NODE_ENV !== 'production' || process.env.ENABLE_TRAINING_API === 'true';
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'chess-evolution', rooms: rooms.size, training: trainingApiAllowed }));
+
+app.get('/api/training/status', async (_req, res) => {
+  await trainingManager.ready;
+  res.set('Cache-Control', 'no-store');
+  res.json({ ...trainingManager.getStatus(), enabled: trainingApiAllowed });
+});
+
+app.get('/api/training/model', async (_req, res) => {
+  await trainingManager.ready;
+  res.set('Cache-Control', 'no-store');
+  res.json(trainingManager.getModel());
+});
+
+app.post('/api/training/start', async (req, res) => {
+  if (!trainingApiAllowed) return res.status(403).json({ error: 'Training API is disabled on this production server. Run the project locally or set ENABLE_TRAINING_API=true.' });
+  try {
+    const status = await trainingManager.start(req.body || {});
+    res.status(202).json(status);
+  } catch (error) {
+    res.status(409).json({ error: error instanceof Error ? error.message : 'Training could not be started.' });
+  }
+});
+
+app.post('/api/training/stop', (req, res) => {
+  if (!trainingApiAllowed) return res.status(403).json({ error: 'Training API is disabled on this production server.' });
+  res.json(trainingManager.stop());
+});
 
 function cleanName(value) {
   const name = String(value || 'Player').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 18);

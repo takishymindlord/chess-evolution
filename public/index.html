@@ -75,6 +75,35 @@
             <p class="local-play-caption">Take turns on the same phone, tablet, or computer. No internet connection is needed for local matches once the app is loaded.</p>
           </div>
 
+          <div class="computer-play-panel ai-watch-panel">
+            <div class="local-play-heading"><span>AI VS AI</span><span>WATCH &amp; SIMULATE</span></div>
+            <label class="field-label" for="aiWatchWhiteSelect">WHITE AI</label>
+            <select id="aiWatchWhiteSelect" class="text-field">
+              <option value="beginner">Beginner</option>
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+              <option value="expert">Expert</option>
+            </select>
+            <label class="field-label" for="aiWatchBlackSelect">BLACK AI</label>
+            <select id="aiWatchBlackSelect" class="text-field">
+              <option value="beginner">Beginner</option>
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+              <option value="expert">Expert</option>
+            </select>
+            <label class="field-label" for="aiWatchSpeedSelect">WATCH SPEED</label>
+            <select id="aiWatchSpeedSelect" class="text-field">
+              <option value="150">Fast · 0.15 sec per move</option>
+              <option value="500" selected>Normal · 0.5 sec per move</option>
+              <option value="1200">Slow · 1.2 sec per move</option>
+              <option value="2500">Study · 2.5 sec per move</option>
+            </select>
+            <button id="aiWatchBtn" class="computer-play-button ai-watch-button" type="button"><span>WATCH AI PLAY AI</span><b>◈</b></button>
+            <p class="local-play-caption">Watch two Evolution AI players compete on the live board. Stop the match at any time or let it finish naturally.</p>
+          </div>
+
           <div class="computer-play-panel">
             <div class="local-play-heading"><span>PLAY AGAINST COMPUTER</span><span>EVOLUTION AI</span></div>
             <label class="field-label" for="computerSideSelect">YOUR SIDE</label>
@@ -92,6 +121,55 @@
             </select>
             <button id="computerPlayBtn" class="computer-play-button" type="button"><span>CHALLENGE THE AI</span><b>✦</b></button>
             <p class="local-play-caption">The computer plays locally on this device. An internet connection is not required after the app has loaded.</p>
+          </div>
+
+          <div class="computer-play-panel training-lab-panel">
+            <div class="local-play-heading"><span>SELF-PLAY TRAINING LAB</span><span>LEARN / EVOLVE</span></div>
+            <p class="training-intro">Run parallel AI games, save every position, then fit new evaluation weights from the results. The next generation uses the saved model.</p>
+            <label class="field-label" for="trainingGamesSelect">GAMES IN THIS GENERATION</label>
+            <select id="trainingGamesSelect" class="text-field">
+              <option value="50">50 games · quick test</option>
+              <option value="100">100 games</option>
+              <option value="200" selected>200 games · recommended</option>
+              <option value="500">500 games · large run</option>
+              <option value="1000">1,000 games · long run</option>
+            </select>
+            <label class="field-label" for="trainingWorkersSelect">PARALLEL WORKERS</label>
+            <select id="trainingWorkersSelect" class="text-field">
+              <option value="1">1 worker</option>
+              <option value="2">2 workers</option>
+              <option value="4" selected>4 workers</option>
+              <option value="6">6 workers</option>
+              <option value="8">8 workers</option>
+              <option value="12">12 workers</option>
+              <option value="16">16 workers</option>
+            </select>
+            <label class="field-label" for="trainingDepthSelect">SEARCH DEPTH PER MOVE</label>
+            <select id="trainingDepthSelect" class="text-field">
+              <option value="1">Depth 1 · fastest data collection</option>
+              <option value="2" selected>Depth 2 · balanced training</option>
+              <option value="3">Depth 3 · stronger but slower</option>
+              <option value="4">Depth 4 · slow</option>
+              <option value="5">Depth 5 · very slow</option>
+            </select>
+            <button id="startTrainingBtn" class="computer-play-button training-start-button" type="button"><span>START TRAINING GENERATION</span><b>↗</b></button>
+            <button id="stopTrainingBtn" class="training-stop-button hidden" type="button">STOP AFTER CURRENT GAMES</button>
+            <div class="training-monitor" aria-live="polite">
+              <div class="training-monitor-heading"><span id="trainingPhase">READY</span><b>GEN <span id="trainingGeneration">000</span></b></div>
+              <div class="training-progress-track"><div id="trainingProgressFill" class="training-progress-fill"></div></div>
+              <div id="trainingProgressText" class="training-progress-text">0 / 0 games · 0%</div>
+              <div class="training-stat-grid">
+                <div><small>POSITIONS</small><strong id="trainingPositions">0</strong></div>
+                <div><small>CAPTURES</small><strong id="trainingCaptures">0</strong></div>
+                <div><small>INHERITANCE</small><strong id="trainingEvolutionEvents">0</strong></div>
+                <div><small>RESULTS W · D · B</small><strong id="trainingResults">0W · 0D · 0B</strong></div>
+              </div>
+              <p id="trainingMetrics" class="training-metrics">Model: nine learned evaluation weights · awaiting first generation</p>
+              <p id="trainingWeights" class="training-weights">material: 1.000 · inheritance: 1.000 · synergy: 1.000</p>
+              <p id="trainingOutput" class="training-output"></p>
+              <p id="trainingError" class="training-error" role="alert"></p>
+            </div>
+            <p class="local-play-caption">Games run on this computer in parallel workers. Data and the learned model are saved under <code>data/training/</code>. Training can be stopped safely between games.</p>
           </div>
         </section>
 
