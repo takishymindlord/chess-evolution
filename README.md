@@ -1,4 +1,4 @@
-# Chess Evolution
+# Chess Evolution v1.4.0
 
 Chess Evolution is a browser chess game with cumulative capture inheritance, online room-based multiplayer, and local pass-and-play.
 
@@ -53,7 +53,7 @@ Render web services support server-side applications and WebSockets. Free instan
 
 ## Piece appearance and preferences
 
-- The **VISUAL: ICONS / VISUAL: MERGED** button changes how hybrid pieces appear. The icon style shows one small symbol for each additional movement capability. The merged style combines the original piece with the inherited symbols; a piece with queen, rook, bishop, and knight capabilities becomes a star emblem.
+- The **VISUAL: ICONS / VISUAL: MERGED** button changes how hybrid pieces appear. The icon style shows one small symbol for each additional movement capability. The merged style replaces the ordinary glyph with one integrated metallic SVG sculpture: crowns, horse-head silhouettes, bishop details, and rook battlements are fused into the overall piece shape rather than placed in corner badges. A piece with queen, rook, bishop, and knight capabilities keeps the star emblem as its maximum form.
 - Visual preference is saved locally in each browser/device. In an online match, the two players can choose different appearances without changing the shared match state or the other player's view.
 - In local play, the visual style applies to the shared device for both players.
 
@@ -65,5 +65,14 @@ Render web services support server-side applications and WebSockets. Free instan
 - Capabilities are stored as a set: capturing another piece with an already-owned movement type does not add a duplicate capability or a duplicate badge. A piece also does not display its own native movement as an inherited badge.
 - Select any piece to open its **Capture History** tree. It shows the pieces that unit captured and nested branches from captured pieces that had captured others. When an evolved piece is captured, its complete nested capture tree moves with it to the capturing piece.
 - The merged star emblem appears when a unit has all four special movement types: queen, rook, bishop, and knight.
-- At checkmate or stalemate, a match-statistics recap appears with each side's moves, captures, newly acquired abilities, promotions, and most-evolved surviving unit.
+- At checkmate or stalemate, a result popup announces the winner (or draw). Players can close it or open the statistics view, which shows each side's moves, captures, newly acquired abilities, promotions, and most-evolved surviving unit.
 - Standard king safety, check, checkmate, stalemate, castling, en passant, and promotion are included.
+
+
+## v1.4.0 visual and result-screen update
+
+- Added `public/merged-art.js`, which renders unique fused vector artwork for the current set of movement capabilities. The art is generated on the client and does not change the server-side chess rules or shared game state.
+- Retained the four-power star as the maximum evolution form. Kings remain ordinary kings and never render hybrid art.
+- Added a modal match-end announcement for checkmate and stalemate, with **View Statistics** and **Close** actions. The statistics view can return to the result announcement or close back to the board.
+- Updated the service-worker cache to `v4` and precached the new art module so installed PWA clients receive the new renderer.
+- Automated coverage includes fused-art combinations, the maximum star, and the immutable king.
