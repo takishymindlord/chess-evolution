@@ -1,10 +1,12 @@
-const CACHE_NAME = 'chess-evolution-static-v10';
+const CACHE_NAME = 'chess-evolution-static-v12';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
   '/engine.js',
+  '/game-storage.js',
+  '/game-replay.js',
   '/ai.js',
   '/ai-worker.js',
   '/merged-art.js',

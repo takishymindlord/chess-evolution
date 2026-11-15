@@ -1,9 +1,9 @@
 {
   "name": "chess-evolution-online",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "private": true,
   "type": "module",
-  "description": "Chess Evolution with self-play, repetition-aware AI, concurrent training, and a persistent learned evaluation model.",
+  "description": "Chess Evolution with self-play, repetition-aware AI, concurrent training, and a persistent learned evaluation model, and saved-game replay.",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",

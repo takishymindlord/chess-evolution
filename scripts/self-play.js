@@ -492,7 +492,7 @@ export async function runTournament(options) {
 
   const manifest = {
     application: 'Chess Evolution Self-Play Training Lab',
-    projectVersion: '1.9.0',
+    projectVersion: '1.9.1',
     createdAt: summary.createdAt,
     parameters: options,
     personalities: AI_PERSONALITIES,

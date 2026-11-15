@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+const server = await readFile(new URL('../server.js', import.meta.url), 'utf8');
 const worker = await readFile(new URL('../public/ai-worker.js', import.meta.url), 'utf8');
 const serviceWorker = await readFile(new URL('../public/service-worker.js', import.meta.url), 'utf8');
 
@@ -35,7 +36,7 @@ test('AI vs AI watch mode is exposed and uses the background search worker', () 
 });
 
 test('PWA app shell precaches the AI engine and its worker', () => {
-  assert.match(serviceWorker, /chess-evolution-static-v10/);
+  assert.match(serviceWorker, /chess-evolution-static-v12/);
   assert.match(serviceWorker, /'\/ai\.js'/);
   assert.match(serviceWorker, /'\/ai-worker\.js'/);
 });
@@ -47,4 +48,15 @@ test('Training Lab exposes parallel self-play settings, progress and stop contro
   assert.match(app, /api\/training\/start/);
   assert.match(app, /api\/training\/status/);
   assert.match(app, /api\/training\/model/);
+});
+
+test('live Training Lab exposes a key field and authenticates start/stop requests', () => {
+  assert.match(html, /id="trainingApiKeyInput"/);
+  assert.match(html, /id="saveTrainingKeyBtn"/);
+  assert.match(app, /sessionStorage\.setItem\(TRAINING_KEY_SESSION, key\)/);
+  assert.match(app, /'x-training-key': key/);
+  assert.match(server, /TRAINING_API_KEY/);
+  assert.match(server, /timingSafeEqual/);
+  assert.match(server, /status\(401\)/);
+  assert.match(server, /requireTrainingAccess\(req, res\)/);
 });

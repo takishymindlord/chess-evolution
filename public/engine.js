@@ -43,6 +43,7 @@ export function createInitialState() {
   }
   const state = {
     board,
+    startedAt: Date.now(),
     turn: 'white',
     enPassant: null,
     moveNumber: 1,
@@ -415,7 +416,8 @@ export function playMove(state, from, to, promotion = 'queen') {
     inherited: result.inherited,
     castle: move.castle || null,
     enPassant: Boolean(move.enPassant),
-    promotion: promotedTo
+    promotion: promotedTo,
+    playedAt: Date.now()
   };
   state.history.push(record);
   state.lastMove = { from, to };

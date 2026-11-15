@@ -27,6 +27,7 @@
       </a>
       <div class="topbar-right">
         <span class="connection-pill"><i id="connectionDot"></i><span id="connectionText">CONNECTING</span></span>
+        <button id="savedGamesNavBtn" class="install-app-button saved-games-nav" type="button">SAVED GAMES</button>
         <button id="installAppBtn" class="install-app-button hidden" type="button">INSTALL APP</button>
         <span class="topbar-edition">A DIFFERENT KIND OF CHECKMATE</span>
       </div>
@@ -126,6 +127,14 @@
           <div class="computer-play-panel training-lab-panel">
             <div class="local-play-heading"><span>SELF-PLAY TRAINING LAB</span><span>LEARN / EVOLVE</span></div>
             <p class="training-intro">Run parallel AI games, save every position, then fit new evaluation weights from the results. The next generation uses the saved model.</p>
+            <div class="training-access-box">
+              <label class="field-label" for="trainingApiKeyInput">TRAINING ACCESS KEY · REQUIRED ON THE LIVE SERVER</label>
+              <div class="training-access-row">
+                <input id="trainingApiKeyInput" class="text-field" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the key configured on your server">
+                <button id="saveTrainingKeyBtn" class="training-key-button" type="button">SAVE KEY</button>
+              </div>
+              <p id="trainingKeyMessage" class="training-key-message">Local development does not require a key. On the live app, enter the server key here.</p>
+            </div>
             <label class="field-label" for="trainingGamesSelect">GAMES IN THIS GENERATION</label>
             <select id="trainingGamesSelect" class="text-field">
               <option value="50">50 games · quick test</option>
@@ -176,6 +185,40 @@
         <div class="lobby-bottom-note"><span class="note-star">✳</span> NO TWO MATCHES EVOLVE THE SAME WAY.</div>
       </section>
 
+      <section id="savedGamesScreen" class="saved-games-screen hidden" aria-labelledby="savedGamesTitle">
+        <div class="saved-games-heading">
+          <div>
+            <div class="eyebrow"><span class="eyebrow-line"></span> YOUR MATCH ARCHIVE <span class="eyebrow-line"></span></div>
+            <h2 id="savedGamesTitle">Saved <em>games.</em></h2>
+            <p>Matches you choose to keep are stored on this device first. When online, the app can sync them to your game archive.</p>
+          </div>
+          <button id="savedGamesBackBtn" class="end-secondary-button saved-back-button" type="button">BACK</button>
+        </div>
+
+        <section class="archive-tools-card">
+          <div class="local-play-heading"><span>ARCHIVE SYNC</span><span>DEVICE + CLOUD</span></div>
+          <p class="archive-explainer">Your archive key lets another device access the same cloud archive. Keep it private: anyone with this key can read or delete those saved games.</p>
+          <label class="field-label" for="archiveKeyInput">PRIVATE ARCHIVE SYNC KEY</label>
+          <div class="archive-key-row">
+            <input id="archiveKeyInput" class="text-field" type="password" autocomplete="off" spellcheck="false" aria-label="Private archive sync key">
+            <button id="copyArchiveKeyBtn" class="training-key-button" type="button">COPY</button>
+          </div>
+          <div class="archive-action-row">
+            <button id="useArchiveKeyBtn" class="training-key-button" type="button">LINK THIS DEVICE</button>
+            <button id="syncSavedGamesBtn" class="training-key-button" type="button">SYNC NOW</button>
+            <button id="exportSavedGamesBtn" class="training-key-button" type="button">EXPORT BACKUP</button>
+            <button id="importSavedGamesBtn" class="training-key-button" type="button">IMPORT BACKUP</button>
+            <input id="importSavedGamesInput" type="file" accept="application/json,.json" class="hidden" aria-label="Choose saved games backup">
+          </div>
+          <p id="archiveSyncStatus" class="archive-sync-status" role="status">Saved games stay on this device when offline. Cloud sync starts when a connection is available.</p>
+        </section>
+
+        <div class="saved-games-list-heading"><span>YOUR SAVED MATCHES</span><span id="savedGamesCount">0 GAMES</span></div>
+        <div id="savedGamesList" class="saved-games-list">
+          <div class="saved-games-empty">No saved games yet. Save a completed match to see it here.</div>
+        </div>
+      </section>
+
       <section id="gameScreen" class="game-screen hidden">
         <div class="game-heading">
           <div>
@@ -204,6 +247,25 @@
           </div>
 
           <aside class="game-sidebar">
+            <section id="replayControlsCard" class="status-card replay-controls-card hidden">
+              <div class="status-card-top"><span>SAVED GAME REPLAY</span><span class="live-label replay-label"><i></i> REPLAY</span></div>
+              <div id="replayProgressText" class="replay-progress-text">Move 0 / 0</div>
+              <div class="replay-control-buttons">
+                <button id="replayRestartBtn" type="button" title="Restart replay" aria-label="Restart replay">↺</button>
+                <button id="replayPreviousBtn" type="button" title="Previous move" aria-label="Previous move">◀</button>
+                <button id="replayPlayPauseBtn" type="button">PAUSE</button>
+                <button id="replayNextBtn" type="button" title="Next move" aria-label="Next move">▶</button>
+              </div>
+              <label class="field-label" for="replaySpeedSelect">PLAYBACK SPEED</label>
+              <select id="replaySpeedSelect" class="text-field">
+                <option value="original" selected>Original timing · real match pace</option>
+                <option value="0.5">0.5× · slower</option>
+                <option value="1">1× · normal</option>
+                <option value="2">2× · faster</option>
+                <option value="4">4× · very fast</option>
+              </select>
+              <p id="replayTimingHint" class="replay-timing-hint">Moves will play at the intervals recorded during the original match.</p>
+            </section>
             <section class="status-card">
               <div class="status-card-top"><span>MATCH STATUS</span><span class="live-label"><i></i> LIVE</span></div>
               <div class="turn-status"><span id="turnIcon" class="turn-icon white-turn">♔</span><div><small id="turnLabel">WHITE TO MOVE</small><strong id="turnHeadline">Your move.</strong></div></div>
@@ -247,8 +309,9 @@
         <div class="eyebrow end-eyebrow"><span class="eyebrow-line"></span><span id="matchEndEyebrow">MATCH COMPLETE</span><span class="eyebrow-line"></span></div>
         <h3 id="matchEndTitle">White wins!</h3>
         <p id="matchEndMessage">The match is complete.</p>
-        <div class="end-actions">
-          <button id="viewMatchStatsBtn" class="end-primary-button" type="button">VIEW STATISTICS</button>
+        <div class="end-actions end-actions-three">
+          <button id="saveMatchBtn" class="end-primary-button" type="button">SAVE MATCH</button>
+          <button id="viewMatchStatsBtn" class="end-secondary-button" type="button">STATISTICS</button>
           <button id="closeMatchEndBtn" class="end-secondary-button" type="button">CLOSE</button>
         </div>
       </div>

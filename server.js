@@ -1,5 +1,7 @@
 import express from 'express';
 import http from 'node:http';
+import { timingSafeEqual, createHash } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, writeFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
@@ -17,13 +19,129 @@ const io = new Server(server, {
 });
 
 const PORT = Number(process.env.PORT || 3000);
+const SAVED_GAMES_DIR = process.env.SAVED_GAMES_DIR || path.join(__dirname, 'data', 'saved-games');
 const rooms = new Map();
 const socketRooms = new Map();
 
-app.use(express.json({ limit: '32kb' }));
+app.use(express.json({ limit: '3mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-const trainingApiAllowed = process.env.NODE_ENV !== 'production' || process.env.ENABLE_TRAINING_API === 'true';
+const isProduction = process.env.NODE_ENV === 'production';
+const trainingApiKey = String(process.env.TRAINING_API_KEY || '').trim();
+// Keep the expensive training endpoint closed in production unless the owner
+// configures a private key. Local development remains friction-free.
+const trainingApiAllowed = !isProduction || Boolean(trainingApiKey);
+const trainingAccessRequired = isProduction || Boolean(trainingApiKey);
+
+function hasValidTrainingKey(req) {
+  if (!trainingAccessRequired) return true;
+  if (!trainingApiKey) return false;
+  const supplied = Buffer.from(String(req.get('x-training-key') || ''));
+  const expected = Buffer.from(trainingApiKey);
+  return expected.length > 0 && supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
+function requireTrainingAccess(req, res) {
+  if (!trainingApiAllowed) {
+    res.status(503).json({ error: 'Training is disabled. Configure TRAINING_API_KEY in your server environment, then redeploy.' });
+    return false;
+  }
+  if (!hasValidTrainingKey(req)) {
+    res.status(401).json({ error: 'A valid training access key is required. Enter the key configured by the server owner in the Training Lab.' });
+    return false;
+  }
+  return true;
+}
+
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'chess-evolution', rooms: rooms.size, training: trainingApiAllowed }));
+
+function validArchiveKey(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+}
+
+function archiveDirectory(libraryKey) {
+  const folder = createHash('sha256').update(libraryKey.toLowerCase()).digest('hex');
+  return path.join(SAVED_GAMES_DIR, folder);
+}
+
+function validSavedGame(game) {
+  if (!game || typeof game !== 'object' || Array.isArray(game)) return false;
+  if (typeof game.id !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(game.id)) return false;
+  if (!Array.isArray(game.moves) || game.moves.length > 1500) return false;
+  if (!game.initialState || !Array.isArray(game.initialState.board) || game.initialState.board.length !== 8) return false;
+  if (!game.players || typeof game.players !== 'object') return false;
+  const serialized = JSON.stringify(game);
+  if (Buffer.byteLength(serialized, 'utf8') > 256 * 1024) return false;
+  return true;
+}
+
+async function readArchiveGames(libraryKey) {
+  const directory = archiveDirectory(libraryKey);
+  let names;
+  try { names = await readdir(directory); }
+  catch (error) { if (error?.code === 'ENOENT') return []; throw error; }
+  const games = [];
+  for (const name of names.filter((entry) => entry.endsWith('.json')).slice(0, 1000)) {
+    try {
+      const game = JSON.parse(await readFile(path.join(directory, name), 'utf8'));
+      if (validSavedGame(game)) games.push(game);
+    } catch { /* Ignore an incomplete or invalid archive file. */ }
+  }
+  return games.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+}
+
+app.get('/api/saved-games', async (req, res) => {
+  const libraryKey = String(req.get('x-archive-key') || '').toLowerCase();
+  if (!validArchiveKey(libraryKey)) return res.status(400).json({ error: 'A valid 64-character archive key is required.' });
+  try {
+    const games = await readArchiveGames(libraryKey);
+    res.set('Cache-Control', 'no-store');
+    res.json({ games, count: games.length });
+  } catch (error) {
+    console.error('Saved-game archive read failed:', error);
+    res.status(500).json({ error: 'The cloud game archive could not be read.' });
+  }
+});
+
+app.post('/api/saved-games/sync', async (req, res) => {
+  const libraryKey = String(req.get('x-archive-key') || '').toLowerCase();
+  const games = req.body?.games;
+  if (!validArchiveKey(libraryKey)) return res.status(400).json({ error: 'A valid 64-character archive key is required.' });
+  if (!Array.isArray(games) || games.length > 20) return res.status(400).json({ error: 'Sync accepts between 1 and 20 games per request.' });
+  if (games.some((game) => !validSavedGame(game))) return res.status(400).json({ error: 'One or more saved games are invalid or too large.' });
+  try {
+    const directory = archiveDirectory(libraryKey);
+    await mkdir(directory, { recursive: true });
+    const stored = [];
+    for (const game of games) {
+      const target = path.join(directory, `${game.id}.json`);
+      const temporary = `${target}.${process.pid}.tmp`;
+      await writeFile(temporary, JSON.stringify(game), { mode: 0o600 });
+      await rename(temporary, target);
+      stored.push(game.id);
+    }
+    res.json({ ok: true, stored });
+  } catch (error) {
+    console.error('Saved-game archive write failed:', error);
+    res.status(507).json({ error: 'The server could not persist these games. Check its storage configuration.' });
+  }
+});
+
+app.delete('/api/saved-games/:gameId', async (req, res) => {
+  const libraryKey = String(req.get('x-archive-key') || '').toLowerCase();
+  const gameId = String(req.params.gameId || '');
+  if (!validArchiveKey(libraryKey)) return res.status(400).json({ error: 'A valid 64-character archive key is required.' });
+  if (!/^[a-zA-Z0-9_-]{8,100}$/.test(gameId)) return res.status(400).json({ error: 'Invalid saved-game ID.' });
+  try {
+    await unlink(path.join(archiveDirectory(libraryKey), `${gameId}.json`)).catch((error) => {
+      if (error?.code !== 'ENOENT') throw error;
+    });
+    res.json({ ok: true, deleted: gameId });
+  } catch (error) {
+    console.error('Saved-game archive delete failed:', error);
+    res.status(500).json({ error: 'The saved game could not be removed from the cloud archive.' });
+  }
+});
+
 
 app.get('/api/training/status', async (_req, res) => {
   await trainingManager.ready;
@@ -38,7 +156,7 @@ app.get('/api/training/model', async (_req, res) => {
 });
 
 app.post('/api/training/start', async (req, res) => {
-  if (!trainingApiAllowed) return res.status(403).json({ error: 'Training API is disabled on this production server. Run the project locally or set ENABLE_TRAINING_API=true.' });
+  if (!requireTrainingAccess(req, res)) return;
   try {
     const status = await trainingManager.start(req.body || {});
     res.status(202).json(status);
@@ -48,7 +166,7 @@ app.post('/api/training/start', async (req, res) => {
 });
 
 app.post('/api/training/stop', (req, res) => {
-  if (!trainingApiAllowed) return res.status(403).json({ error: 'Training API is disabled on this production server.' });
+  if (!requireTrainingAccess(req, res)) return;
   res.json(trainingManager.stop());
 });
 

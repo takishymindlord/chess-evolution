@@ -1,6 +1,6 @@
-# Chess Evolution v1.9.0
+# Chess Evolution v1.9.1
 
-> Updated v1.9.0 documentation. Older version notes below describe historical milestones; where they conflict with the current features, the v1.9.0 sections take precedence.
+> Updated v1.9.1 documentation. Older version notes below describe historical milestones; where they conflict with the current features, the latest sections take precedence.
 
 Chess Evolution is a browser chess game with cumulative capture inheritance, online room-based multiplayer, and local pass-and-play.
 
@@ -35,6 +35,16 @@ npm test
 ```
 
 ## Publish online (Render)
+
+### Enable the live Training Lab securely
+
+Production self-play training is disabled until the server owner sets a private `TRAINING_API_KEY`. In Render, open the web service → **Environment** → **Add Environment Variable**, set the key to `TRAINING_API_KEY`, and use a long random value. Generate one on a computer with Node.js using:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Save the environment change and redeploy. Open the live Chess Evolution app, paste the same value into **Training Access Key** in the Self-Play Training Lab, and press **Save Key**. The browser keeps it only for the current tab session. The key protects the CPU-intensive start/stop endpoints; do not put it in source code, `render.yaml`, or a public GitHub commit. Local development does not need a key.
 
 This project includes a `render.yaml` Blueprint and a `Dockerfile`.
 
@@ -141,7 +151,7 @@ Draw protection in the runner includes threefold repetition, a 100-half-move qui
 **Historical note (v1.8.0):** At that milestone, the personality league only generated data and did not update AI weights. In v1.9.0, the separate `npm run train` pipeline and lobby Training Lab perform parallel self-play and fit a compact linear evaluation model. See `SELF-PLAY-LAB.md` for current instructions.
 
 
-## v1.9.0 — Repetition-safe play and real self-play training
+## v1.9.1 — Secure live Training Lab access
 
 The browser rules engine now tracks rule-relevant position history and the half-move clock. Local, online, player-vs-AI and AI-vs-AI games automatically finish as a draw on threefold repetition or after 100 half-moves without a pawn move or capture. Position identity retains castling/pawn-move rights and inherited powers. The AI search also detects revisited positions and treats them as an undesirable draw line to discourage loops before the automatic draw triggers.
 
@@ -161,4 +171,17 @@ Use a smaller test run before a large session:
 npm run train -- --games 8 --workers 2 --depth 1 --max-plies 30
 ```
 
-Training data is local to the computer running the server. The API is enabled by default for local development. On a production deployment it is disabled unless `ENABLE_TRAINING_API=true` is explicitly configured, to avoid exposing a CPU-intensive training endpoint publicly.
+Training data is written to the filesystem of the computer running the server. The training API is enabled by default for local development. In production, the start/stop endpoints require the private `TRAINING_API_KEY` configured by the server owner and entered in the Training Lab. The key is never stored in the project source.
+
+
+## v1.10.0 — Saved Games archive and timed replay
+
+Every completed match (online multiplayer, local pass-and-play, player vs AI, and AI vs AI watch mode) offers an optional **Save Match** action. A saved record includes the starting board, player labels, result, complete move sequence, Evolution capture/inheritance history, promotions, and a timestamp for every move.
+
+Saved records are stored first in browser IndexedDB on the device. This makes saving available while offline and keeps a durable local copy that is not tied to the server or GitHub. When the device is online, the app attempts to synchronize the archive to the Node server. A private 64-character archive key identifies the user's archive; link another device by copying that key into **Saved Games → Private Archive Sync Key**. Keep this key secret. Export/Import Backup is also available for manual transfer and backup.
+
+The **Saved Games** view lists saved matches and opens a replay on the normal Evolution board. Replay rebuilds the match by applying each recorded legal move through the same engine, so promotions, captures, and inherited capabilities are recreated. The default **Original timing** option uses the measured gap between each move (including the first move from match start), preserving thinking pauses. Playback can also be changed to 0.5×, 1×, 2×, or 4×, paused, stepped, or restarted.
+
+Server archive copies are stored under `data/saved-games/` by default, not in GitHub. On Render, the default filesystem is ephemeral: the browser's local IndexedDB copy stays on that device, but server copies can disappear after restarts or deployments. To retain server copies across deployments, attach a paid Render persistent disk mounted at `/var/data` and set `SAVED_GAMES_DIR=/var/data/saved-games`; Render documents that persistent disks preserve files under their mount path, while default filesystems are ephemeral. See [Render Persistent Disks](https://render.com/docs/disks).
+
+Self-play training scripts and the Training Lab remain in this build for occasional local PC training. They are not removed or replaced by the saved-game feature. Training datasets and generation logs stay out of Git by default, but `data/training/current-model.json` is deliberately allowed through `.gitignore`: after training on your PC, you can commit and push that one model file so the deployed app can load the updated evaluation weights. The server reads it at startup and the browser fetches the current model for AI searches. Do not commit `data/saved-games/`; those are player match records, not source code.

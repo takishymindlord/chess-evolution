@@ -1,0 +1,19 @@
+CHESS EVOLUTION v1.10.0 — SAVED GAMES UPDATE
+
+Recommended: use the complete project ZIP when updating an existing GitHub repository.
+
+1. Extract the ZIP.
+2. Copy all extracted project files into your existing repository folder, allowing files to be overwritten.
+3. Do NOT upload node_modules or data/saved-games.
+4. Commit and push the changes to GitHub.
+5. Wait for Render to deploy, then open the app and try saving a completed match.
+
+If you use the smaller PATCH ZIP instead, extract it directly into the root of your existing repository and allow matching files to be overwritten. It contains only files changed or added for v1.10.0.
+
+The .gitignore in this update keeps node_modules, local player match archives, and large generated training datasets out of GitHub. It deliberately allows data/training/current-model.json to be committed after optional local PC training.
+
+For offline/online saved games:
+- Saved locally in the browser's IndexedDB first.
+- Server upload is automatic while online; the same private archive key links multiple devices.
+- Saved matches are not stored in GitHub.
+- Render's default filesystem can be ephemeral. A persistent Render disk is needed for durable server-side copies across restarts/deploys.

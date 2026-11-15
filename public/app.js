@@ -1,4 +1,6 @@
-import { createInitialState, getLegalMoves, PIECE_NAMES, playMove } from './engine.js';
+import { createInitialState, getLegalMoves, PIECE_NAMES, playMove, squareToCoords } from './engine.js';
+import { getArchiveKey, setArchiveKey, listSavedGames, putSavedGame, putSavedGames, removeSavedGame, getDeletedGameIds, rememberDeletedGame, forgetDeletedGame } from './game-storage.js';
+import { scaledMoveDelay, formatElapsed } from './game-replay.js';
 import { mergedPieceSvg } from './merged-art.js';
 import { getPieceVisualMode } from './piece-visuals.js';
 
@@ -18,6 +20,16 @@ let roomCode = null;
 let myColor = null;
 let gameMode = 'online';
 let gameState = null;
+let initialGameState = null;
+let activeScreen = 'lobby';
+let savedGamesReturnScreen = 'lobby';
+let replayRecord = null;
+let replayIndex = 0;
+let replayPlaying = false;
+let replayTimer = null;
+let replaySpeed = 'original';
+let replayReturnContext = null;
+let currentMatchSavedId = null;
 let players = { white: null, black: null };
 let presence = { white: false, black: false };
 let selected = null;
@@ -37,6 +49,16 @@ let aiWatchDelayMs = 500;
 let aiWatchTimer = null;
 let learnedEvaluationModel = null;
 let trainingPollTimer = null;
+
+const TRAINING_KEY_SESSION = 'chessEvolution.trainingApiKey';
+function getTrainingApiKey() {
+  try { return sessionStorage.getItem(TRAINING_KEY_SESSION) || ''; }
+  catch { return ''; }
+}
+function trainingAuthHeaders() {
+  const key = getTrainingApiKey();
+  return key ? { 'x-training-key': key } : {};
+}
 
 function invalidateAiSearch() {
   aiRequestId += 1;
@@ -184,8 +206,34 @@ function escapeHtml(value) {
 }
 
 function setScreen(screen) {
+  activeScreen = screen;
   $('lobbyScreen').classList.toggle('hidden', screen !== 'lobby');
   $('gameScreen').classList.toggle('hidden', screen !== 'game');
+  $('savedGamesScreen').classList.toggle('hidden', screen !== 'saved');
+  $('savedGamesNavBtn').classList.toggle('active', screen === 'saved');
+}
+
+function cloneData(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function resetInitialGameState(state = gameState) {
+  const initial = createInitialState();
+  if (Number.isFinite(Number(state?.startedAt))) initial.startedAt = Number(state.startedAt);
+  initialGameState = initial;
+  currentMatchSavedId = null;
+}
+
+function clearReplayTimer() {
+  if (replayTimer) clearTimeout(replayTimer);
+  replayTimer = null;
+}
+
+function pauseReplay() {
+  replayPlaying = false;
+  clearReplayTimer();
+  renderReplayControls();
+  if (gameMode === 'replay' && gameState) renderStatus();
 }
 
 function savedSession() {
@@ -209,6 +257,7 @@ function startLocalGame() {
   roomCode = null;
   myColor = 'white';
   gameState = createInitialState();
+  resetInitialGameState(gameState);
   players = {
     white: { name: getPlayerName() },
     black: { name: ($('localOpponentName').value.trim() || 'Player 2').slice(0, 18) }
@@ -239,6 +288,7 @@ function startComputerGame() {
     ? $('computerDifficultySelect').value
     : 'medium';
   gameState = createInitialState();
+  resetInitialGameState(gameState);
   const humanName = getPlayerName();
   players = myColor === 'white'
     ? { white: { name: humanName }, black: { name: 'Evolution AI' } }
@@ -270,6 +320,7 @@ function startAiWatchGame() {
   aiWatchBlackDifficulty = ['beginner', 'easy', 'medium', 'hard', 'expert'].includes($('aiWatchBlackSelect').value) ? $('aiWatchBlackSelect').value : 'medium';
   aiWatchDelayMs = Number($('aiWatchSpeedSelect').value) || 500;
   gameState = createInitialState();
+  resetInitialGameState(gameState);
   players = {
     white: { name: `Evolution AI · ${aiWatchWhiteDifficulty.toUpperCase()}` },
     black: { name: `Evolution AI · ${aiWatchBlackDifficulty.toUpperCase()}` }
@@ -328,6 +379,7 @@ function enterRoom(payload) {
   roomCode = payload.code;
   myColor = payload.color;
   gameState = payload.state;
+  resetInitialGameState(gameState);
   players = payload.players || { white: null, black: null };
   presence = payload.presence || { white: true, black: Boolean(players.black) };
   selected = null;
@@ -384,7 +436,9 @@ function leaveRoom() {
 }
 
 function boardPerspective() {
-  return gameMode === 'local' ? (localOrientation === 'rotate' ? gameState.turn : 'white') : myColor;
+  if (gameMode === 'local') return localOrientation === 'rotate' ? gameState.turn : 'white';
+  if (gameMode === 'replay' || gameMode === 'aiwatch') return 'white';
+  return myColor;
 }
 
 function orderedSquares() {
@@ -496,7 +550,7 @@ function findKing(state, color) {
 }
 
 function onSquareClick(x, y) {
-  if (!gameState || gameMode === 'aiwatch' || (gameMode === 'online' && !players.black)) return;
+  if (!gameState || gameMode === 'replay' || gameMode === 'aiwatch' || (gameMode === 'online' && !players.black)) return;
   const allowedColor = gameMode === 'local' ? gameState.turn : myColor;
   const canMoveNow = !gameState.gameOver && gameState.turn === allowedColor;
   const clicked = gameState.board[y][x];
@@ -585,15 +639,15 @@ function renderPlayers() {
     $('selfStrip').querySelector('.you-tag').textContent = bottomColor === gameState.turn ? 'TO MOVE' : 'BOTTOM';
     return;
   }
-  $('selfStrip').querySelector('.you-tag').textContent = gameMode === 'aiwatch' ? 'WATCHING' : 'YOU';
+  $('selfStrip').querySelector('.you-tag').textContent = ['aiwatch', 'replay'].includes(gameMode) ? (gameMode === 'replay' ? 'REPLAY' : 'WATCHING') : 'YOU';
 
-  if (gameMode === 'aiwatch') {
-    $('selfName').textContent = players.white?.name || 'Evolution AI';
-    $('selfMeta').textContent = `WHITE · AI · ${gameState.captured?.white?.length || 0} CAPTURES`;
+  if (gameMode === 'aiwatch' || gameMode === 'replay') {
+    $('selfName').textContent = players.white?.name || (gameMode === 'replay' ? 'White' : 'Evolution AI');
+    $('selfMeta').textContent = `WHITE · ${gameMode === 'replay' ? 'SAVED GAME' : 'AI'} · ${gameState.captured?.white?.length || 0} CAPTURES`;
     $('selfAvatar').textContent = glyphs.white.king;
     $('selfAvatar').className = 'player-avatar white-avatar';
-    $('opponentName').textContent = players.black?.name || 'Evolution AI';
-    $('opponentMeta').textContent = `BLACK · AI · ${gameState.captured?.black?.length || 0} CAPTURES`;
+    $('opponentName').textContent = players.black?.name || (gameMode === 'replay' ? 'Black' : 'Evolution AI');
+    $('opponentMeta').textContent = `BLACK · ${gameMode === 'replay' ? 'SAVED GAME' : 'AI'} · ${gameState.captured?.black?.length || 0} CAPTURES`;
     $('opponentAvatar').textContent = glyphs.black.king;
     $('opponentAvatar').className = 'player-avatar black-avatar';
     $('opponentPresence').classList.add('online');
@@ -621,21 +675,28 @@ function renderStatus() {
   const isLocal = gameMode === 'local';
   const isComputer = gameMode === 'computer';
   const isAiWatch = gameMode === 'aiwatch';
+  const isReplay = gameMode === 'replay';
   const yourTurn = gameState.turn === myColor;
   const activeName = gameState.turn === 'white' ? 'White' : 'Black';
   const headline = $('turnHeadline');
   const label = $('turnLabel');
   const icon = $('turnIcon');
   const subline = $('statusSubline');
-  const isWaiting = !isLocal && !isComputer && !isAiWatch && !players.black;
+  const isWaiting = !isLocal && !isComputer && !isAiWatch && !isReplay && !players.black;
   const checkmate = gameState.status === 'checkmate';
   const stalemate = gameState.status === 'stalemate';
   const drawn = gameState.gameOver && !gameState.winner;
   icon.textContent = glyphs[gameState.turn].king;
   icon.className = `turn-icon ${gameState.turn === 'white' ? 'white-turn' : 'black-turn'}`;
-  $('newGameBtn').classList.toggle('hidden', !gameState.gameOver);
+  $('newGameBtn').classList.toggle('hidden', !gameState.gameOver || isReplay);
 
-  if (isWaiting) {
+  if (isReplay) {
+    label.textContent = gameState.gameOver ? 'REPLAY COMPLETE' : `REPLAY · ${gameState.turn.toUpperCase()} TO MOVE`;
+    headline.textContent = gameState.gameOver
+      ? (gameState.winner ? `${players[gameState.winner]?.name || (gameState.winner === 'white' ? 'White' : 'Black')} won.` : 'A drawn match.')
+      : `Move ${replayIndex} of ${replayRecord?.moves?.length || 0}`;
+    subline.textContent = replayPlaying ? 'Playing back the saved match timeline.' : 'Replay paused. Step through moves or resume playback.';
+  } else if (isWaiting) {
     label.textContent = 'ROOM OPEN';
     headline.textContent = 'Waiting for player…';
     subline.textContent = `Share room ${roomCode} with a friend to begin.`;
@@ -645,7 +706,7 @@ function renderStatus() {
     subline.textContent = aiThinking ? 'The AI is calculating the next move.' : 'The next move will play automatically.';
   } else if (checkmate) {
     label.textContent = 'CHECKMATE';
-    headline.textContent = isLocal ? `${gameState.winner === 'white' ? 'White' : 'Black'} wins.` : (gameState.winner === myColor ? 'You won.' : (isComputer ? 'Evolution AI wins.' : 'You were defeated.'));
+    headline.textContent = isLocal ? `${gameState.winner === 'white' ? 'White' : 'Black'} wins.` : (gameState.winner === myColor ? 'You won.' : (isComputer ? 'Evolution AI wins.' : (isAiWatch ? `${players[gameState.winner]?.name || 'AI'} wins.` : 'You were defeated.')));
     subline.textContent = 'The king has no safe escape. The match is complete.';
   } else if (drawn) {
     label.textContent = gameState.status === 'threefold-repetition' ? 'THREEFOLD REPETITION' : (gameState.status === 'fifty-move-rule' ? '50-MOVE RULE' : 'STALEMATE');
@@ -666,7 +727,7 @@ function renderStatus() {
   }
 
   const last = gameState.history.at(-1);
-  if (!gameState.gameOver && last?.inherited?.length) {
+  if (!isReplay && !gameState.gameOver && last?.inherited?.length) {
     const names = [...new Set(last.inherited)].map((type) => PIECE_NAMES[type]).join(', ');
     const playerLabel = isLocal ? (last.color === 'white' ? 'White' : 'Black') : (isAiWatch ? (last.color === 'white' ? players.white?.name || 'White AI' : players.black?.name || 'Black AI') : (last.color === myColor ? 'You' : (isComputer ? 'Evolution AI' : 'Opponent')));
     subline.textContent = `${playerLabel} inherited ${names} power${last.inherited.length > 1 ? 's' : ''}.`;
@@ -721,7 +782,7 @@ function renderMatchStats() {
 }
 
 function showMatchEndDialog() {
-  if (!gameState?.gameOver || endPopupShown) return;
+  if (gameMode === 'replay' || !gameState?.gameOver || endPopupShown) return;
 
   const modal = $('matchEndModal');
   const winnerColor = gameState.winner;
@@ -738,6 +799,8 @@ function showMatchEndDialog() {
     ? `${winner || 'The winner'} delivered checkmate. The king has no legal escape.`
     : (drawMessages[gameState.status] || 'The match ended in a draw.');
   $('endStatisticsContent').innerHTML = $('matchStats').innerHTML;
+  $('saveMatchBtn').textContent = currentMatchSavedId ? 'SAVED TO ARCHIVE' : 'SAVE MATCH';
+  $('saveMatchBtn').disabled = Boolean(currentMatchSavedId);
   $('endAnnouncementView').classList.remove('hidden');
   $('endStatisticsView').classList.add('hidden');
 
@@ -786,8 +849,384 @@ function renderGame() {
   renderHistory();
   renderMatchStats();
   updateVisualStyleControls();
+  renderReplayControls();
   showMatchEndDialog();
   if (selected) renderPieceDetail(gameState.board[selected.y][selected.x]);
+}
+
+function buildSavedMatchRecord() {
+  if (!gameState?.gameOver) throw new Error('Only completed matches can be saved.');
+  const startedAt = Number(initialGameState?.startedAt || gameState.startedAt || Date.now());
+  const moves = cloneData(gameState.history || []);
+  const endedAt = Number(moves.at(-1)?.playedAt || Date.now());
+  const modeLabels = { online: 'Online multiplayer', local: 'Local pass-and-play', computer: 'Vs Evolution AI', aiwatch: 'AI vs AI' };
+  return {
+    schemaVersion: 1,
+    id: globalThis.crypto?.randomUUID ? crypto.randomUUID() : `game_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    createdAt: Date.now(),
+    startedAt,
+    endedAt,
+    durationMs: Math.max(0, endedAt - startedAt),
+    mode: gameMode,
+    modeLabel: modeLabels[gameMode] || 'Chess Evolution match',
+    status: gameState.status,
+    winner: gameState.winner || null,
+    players: cloneData(players),
+    moveCount: moves.length,
+    initialState: cloneData(initialGameState || createInitialState()),
+    moves,
+    syncStatus: 'pending'
+  };
+}
+
+async function saveCurrentMatch() {
+  const button = $('saveMatchBtn');
+  if (!gameState?.gameOver || currentMatchSavedId) return;
+  button.disabled = true;
+  button.textContent = 'SAVING…';
+  try {
+    const record = buildSavedMatchRecord();
+    await putSavedGame(record);
+    currentMatchSavedId = record.id;
+    button.textContent = 'SAVED TO ARCHIVE';
+    button.disabled = true;
+    toast('Match saved on this device. Cloud sync will happen when available.');
+    refreshSavedGamesList();
+    syncSavedGames({ quiet: true });
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'SAVE MATCH';
+    toast(error instanceof Error ? error.message : 'The match could not be saved.');
+  }
+}
+
+function getMatchResultLabel(game) {
+  if (game.winner) return `${game.players?.[game.winner]?.name || (game.winner === 'white' ? 'White' : 'Black')} won`;
+  if (game.status === 'threefold-repetition') return 'Draw · repetition';
+  if (game.status === 'fifty-move-rule') return 'Draw · 50-move rule';
+  return 'Draw · stalemate';
+}
+
+async function refreshSavedGamesList() {
+  const list = $('savedGamesList');
+  if (!list) return;
+  try {
+    const games = await listSavedGames();
+    $('savedGamesCount').textContent = `${games.length} ${games.length === 1 ? 'GAME' : 'GAMES'}`;
+    if (!games.length) {
+      list.innerHTML = '<div class="saved-games-empty">No saved games yet. Save a completed match to see it here.</div>';
+      return;
+    }
+    list.innerHTML = games.map((game) => {
+      const date = new Date(Number(game.createdAt) || Date.now()).toLocaleString();
+      const white = game.players?.white?.name || 'White';
+      const black = game.players?.black?.name || 'Black';
+      const syncLabel = game.syncStatus === 'synced' ? 'SERVER COPY UPLOADED' : 'ON THIS DEVICE · WAITING TO SYNC';
+      return `<article class="saved-game-item" data-game-id="${escapeHtml(game.id)}">
+        <div class="saved-game-main"><div class="saved-game-result">${escapeHtml(getMatchResultLabel(game))}</div><div class="saved-game-players">${escapeHtml(white)} <span>vs</span> ${escapeHtml(black)}</div><div class="saved-game-meta">${escapeHtml(game.modeLabel || 'Chess Evolution match')} · ${Number(game.moveCount ?? game.moves?.length ?? 0)} plies · ${escapeHtml(date)}</div><div class="saved-game-sync ${game.syncStatus === 'synced' ? 'is-synced' : ''}">${syncLabel}</div></div>
+        <div class="saved-game-actions"><button type="button" data-watch-game="${escapeHtml(game.id)}" class="saved-watch-button">WATCH REPLAY</button><button type="button" data-delete-game="${escapeHtml(game.id)}" class="saved-delete-button" aria-label="Delete saved game">DELETE</button></div>
+      </article>`;
+    }).join('');
+    list.querySelectorAll('[data-watch-game]').forEach((button) => button.addEventListener('click', async () => {
+      const game = (await listSavedGames()).find((entry) => entry.id === button.dataset.watchGame);
+      if (game) openSavedGame(game);
+    }));
+    list.querySelectorAll('[data-delete-game]').forEach((button) => button.addEventListener('click', () => deleteSavedGame(button.dataset.deleteGame)));
+  } catch (error) {
+    list.innerHTML = `<div class="saved-games-empty">Could not load saved games: ${escapeHtml(error instanceof Error ? error.message : 'storage error')}</div>`;
+  }
+}
+
+async function syncSavedGames({ quiet = false } = {}) {
+  const status = $('archiveSyncStatus');
+  if (!navigator.onLine) {
+    if (status) status.textContent = 'Offline: saved matches are stored on this device and will sync when you reconnect.';
+    return false;
+  }
+  try {
+    const libraryKey = getArchiveKey();
+    // Apply queued deletions before downloading the cloud list again.
+    for (const id of getDeletedGameIds()) {
+      const response = await fetch(`/api/saved-games/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'x-archive-key': libraryKey } });
+      if (response.ok) forgetDeletedGame(id);
+    }
+
+    const response = await fetch('/api/saved-games', { cache: 'no-store', headers: { 'x-archive-key': libraryKey } });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || `Cloud archive unavailable (${response.status}).`);
+    }
+    const remote = await response.json();
+    const remoteGames = Array.isArray(remote.games) ? remote.games : [];
+    const remoteIds = new Set(remoteGames.map((game) => game.id));
+    await putSavedGames(remoteGames.map((game) => ({ ...game, syncStatus: 'synced' })));
+
+    // Render app copies missing from a server-side ephemeral filesystem as pending
+    // again, so the device that still has them can restore the cloud archive.
+    let local = await listSavedGames();
+    for (const game of local) {
+      if (game.syncStatus === 'synced' && !remoteIds.has(game.id)) {
+        await putSavedGame({ ...game, syncStatus: 'pending' });
+      }
+    }
+    local = await listSavedGames();
+    const pending = local.filter((game) => game.syncStatus !== 'synced');
+    let uploaded = 0;
+    for (let offset = 0; offset < pending.length; offset += 8) {
+      const batch = pending.slice(offset, offset + 8);
+      const upload = await fetch('/api/saved-games/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-archive-key': libraryKey },
+        body: JSON.stringify({ games: batch })
+      });
+      if (!upload.ok) {
+        const result = await upload.json().catch(() => ({}));
+        throw new Error(result.error || `Cloud upload failed (${upload.status}).`);
+      }
+      const stored = new Set((await upload.json()).stored || []);
+      for (const game of batch) {
+        if (stored.has(game.id)) {
+          await putSavedGame({ ...game, syncStatus: 'synced', syncedAt: Date.now() });
+          uploaded += 1;
+        }
+      }
+    }
+    if (status) status.textContent = `Server archive upload complete · ${remoteGames.length + uploaded} game${remoteGames.length + uploaded === 1 ? '' : 's'} available in this archive.`;
+    if (activeScreen === 'saved') refreshSavedGamesList();
+    return true;
+  } catch (error) {
+    if (status) status.textContent = `Saved on this device. Server upload will retry: ${error instanceof Error ? error.message : 'server unavailable'}`;
+    if (!quiet) toast('Your games are still stored on this device; server upload could not complete.');
+    return false;
+  }
+}
+
+async function deleteSavedGame(id) {
+  if (!id || !confirm('Delete this saved match from your archive?')) return;
+  rememberDeletedGame(id);
+  await removeSavedGame(id);
+  refreshSavedGamesList();
+  if (navigator.onLine) syncSavedGames({ quiet: true });
+}
+
+async function exportSavedGamesBackup() {
+  try {
+    const games = await listSavedGames();
+    const backup = { format: 'chess-evolution-saved-games', version: 1, exportedAt: new Date().toISOString(), games };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `chess-evolution-saved-games-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast(`${games.length} saved games exported.`);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Could not export the archive.');
+  }
+}
+
+async function importSavedGamesBackup(file) {
+  if (!file) return;
+  try {
+    if (file.size > 20 * 1024 * 1024) throw new Error('Backup is larger than 20 MB.');
+    const data = JSON.parse(await file.text());
+    const games = Array.isArray(data) ? data : data.games;
+    if (!Array.isArray(games)) throw new Error('This file is not a Chess Evolution saved-games backup.');
+    const valid = games.filter((game) => game && typeof game.id === 'string' && Array.isArray(game.moves) && game.initialState?.board?.length === 8)
+      .map((game) => ({ ...game, syncStatus: 'pending' }));
+    if (!valid.length) throw new Error('No valid saved games were found in that backup.');
+    await putSavedGames(valid);
+    toast(`${valid.length} saved game${valid.length === 1 ? '' : 's'} imported.`);
+    await syncSavedGames({ quiet: true });
+    await refreshSavedGamesList();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'The backup could not be imported.');
+  } finally {
+    $('importSavedGamesInput').value = '';
+  }
+}
+
+function openSavedGames() {
+  if (activeScreen !== 'saved') savedGamesReturnScreen = gameMode === 'replay' ? 'saved' : activeScreen;
+  if (gameMode === 'replay') pauseReplay();
+  try { $('archiveKeyInput').value = getArchiveKey(); } catch (error) { $('archiveSyncStatus').textContent = error.message; }
+  setScreen('saved');
+  refreshSavedGamesList();
+  syncSavedGames({ quiet: true });
+}
+
+function returnFromSavedGames() {
+  const target = savedGamesReturnScreen || 'lobby';
+  setScreen(target);
+  if (target === 'game') {
+    renderGame();
+    if (gameMode === 'online' && roomCode && socket?.connected) {
+      socket.emit('join-room', { code: roomCode, playerId, name: getPlayerName(), reconnect: true });
+    } else if (gameMode === 'computer' && gameState && !gameState.gameOver && gameState.turn !== myColor) {
+      requestComputerMove();
+    } else if (gameMode === 'aiwatch' && gameState && !gameState.gameOver) {
+      requestAiWatchMove();
+    }
+  }
+}
+
+function renderReplayControls() {
+  const card = $('replayControlsCard');
+  if (!card) return;
+  const isReplay = gameMode === 'replay' && Boolean(replayRecord);
+  card.classList.toggle('hidden', !isReplay);
+  if (!isReplay) return;
+  const total = replayRecord.moves?.length || 0;
+  const lastPlayedAt = replayIndex > 0 ? Number(replayRecord.moves[replayIndex - 1]?.playedAt) : Number(replayRecord.startedAt);
+  const elapsed = Number.isFinite(lastPlayedAt) ? Math.max(0, lastPlayedAt - Number(replayRecord.startedAt || lastPlayedAt)) : 0;
+  $('replayProgressText').textContent = `MOVE ${replayIndex} / ${total} · ${formatElapsed(elapsed)}`;
+  $('replayPlayPauseBtn').textContent = replayPlaying ? 'PAUSE' : (replayIndex >= total ? 'PLAY AGAIN' : 'PLAY');
+  $('replayPreviousBtn').disabled = replayIndex <= 0;
+  $('replayNextBtn').disabled = replayIndex >= total;
+  $('replayTimingHint').textContent = replaySpeed === 'original'
+    ? 'Using the exact recorded wait between each move. Long thinking pauses are preserved.'
+    : `Playing at ${replaySpeed}× the original speed.`;
+}
+
+function setReplayPosition(moveCount) {
+  if (!replayRecord) return;
+  pauseReplay();
+  gameState = cloneData(replayRecord.initialState);
+  gameState.history = [];
+  if (!gameState.positionCounts) {
+    gameState.positionCounts = {};
+  }
+  const initialKey = Object.keys(gameState.positionCounts)[0];
+  if (!initialKey) {
+    // Saved archives made by this version include the complete initial rules state.
+    // If a legacy export omits repetition bookkeeping, the engine seeds it on its first move.
+  }
+  const target = Math.max(0, Math.min(replayRecord.moves.length, Number(moveCount) || 0));
+  for (const savedMove of replayRecord.moves.slice(0, target)) {
+    const from = squareToCoords(savedMove.from);
+    const to = squareToCoords(savedMove.to);
+    if (!from || !to) throw new Error(`Invalid move in saved game: ${savedMove.notation || savedMove.from}`);
+    playMove(gameState, from, to, savedMove.promotion || 'queen');
+  }
+  replayIndex = target;
+  selected = null;
+  legalMoves = [];
+  renderGame();
+}
+
+function applyNextReplayMove() {
+  if (!replayRecord || replayIndex >= replayRecord.moves.length) {
+    pauseReplay();
+    return;
+  }
+  const savedMove = replayRecord.moves[replayIndex];
+  const from = squareToCoords(savedMove.from);
+  const to = squareToCoords(savedMove.to);
+  if (!from || !to) {
+    pauseReplay();
+    toast('This saved game contains an invalid move and cannot continue replaying.');
+    return;
+  }
+  try {
+    playMove(gameState, from, to, savedMove.promotion || 'queen');
+    replayIndex += 1;
+    renderGame();
+  } catch (error) {
+    pauseReplay();
+    toast(`Replay stopped: ${error instanceof Error ? error.message : 'invalid move'}`);
+    return;
+  }
+  if (replayIndex >= replayRecord.moves.length || gameState.gameOver) pauseReplay();
+  else if (replayPlaying) scheduleReplayMove();
+}
+
+function scheduleReplayMove() {
+  clearReplayTimer();
+  if (!replayPlaying || !replayRecord || replayIndex >= replayRecord.moves.length) return;
+  const delay = scaledMoveDelay(replayRecord.moves, replayIndex, replayRecord.startedAt, replaySpeed);
+  replayTimer = setTimeout(() => {
+    replayTimer = null;
+    applyNextReplayMove();
+  }, delay);
+}
+
+function startReplayPlayback() {
+  if (!replayRecord) return;
+  if (replayIndex >= replayRecord.moves.length) setReplayPosition(0);
+  replayPlaying = true;
+  renderReplayControls();
+  renderStatus();
+  scheduleReplayMove();
+}
+
+function openSavedGame(game) {
+  if (!game || !Array.isArray(game.moves) || !game.initialState?.board) return;
+  pauseReplay();
+  if (gameMode === 'computer' || gameMode === 'aiwatch') invalidateAiSearch();
+  closeMatchEndDialog();
+  if (gameMode !== 'replay') {
+    replayReturnContext = {
+      gameMode, roomCode, myColor, gameState, initialGameState, players, presence,
+      selected, legalMoves, endPopupShown
+    };
+  }
+  replayRecord = cloneData(game);
+  replayIndex = 0;
+  replaySpeed = 'original';
+  $('replaySpeedSelect').value = 'original';
+  gameMode = 'replay';
+  roomCode = null;
+  myColor = 'white';
+  gameState = cloneData(replayRecord.initialState);
+  players = cloneData(replayRecord.players || { white: { name: 'White' }, black: { name: 'Black' } });
+  presence = { white: true, black: true };
+  selected = null;
+  legalMoves = [];
+  endPopupShown = false;
+  $('roomCodeLabel').textContent = 'SAVED';
+  $('roomChipLabel').textContent = 'REPLAY';
+  $('matchModeLabel').textContent = 'SAVED GAME REPLAY';
+  $('copyRoomBtn').classList.add('hidden');
+  $('leaveRoomBtn').textContent = 'BACK TO SAVED GAMES';
+  setConnection(false, 'REPLAY MODE');
+  setScreen('game');
+  renderGame();
+  startReplayPlayback();
+}
+
+function exitSavedGameReplay() {
+  pauseReplay();
+  const context = replayReturnContext;
+  replayReturnContext = null;
+  replayRecord = null;
+  replayIndex = 0;
+  if (context) {
+    gameMode = context.gameMode;
+    roomCode = context.roomCode;
+    myColor = context.myColor;
+    gameState = context.gameState;
+    initialGameState = context.initialGameState;
+    players = context.players;
+    presence = context.presence;
+    selected = context.selected;
+    legalMoves = context.legalMoves;
+    endPopupShown = context.endPopupShown;
+  } else {
+    gameMode = 'online';
+    roomCode = null;
+    myColor = null;
+    gameState = null;
+    initialGameState = null;
+    players = { white: null, black: null };
+    presence = { white: false, black: false };
+  }
+  $('leaveRoomBtn').textContent = 'LEAVE MATCH';
+  $('copyRoomBtn').classList.toggle('hidden', gameMode !== 'online' || !roomCode);
+  setScreen('saved');
+  refreshSavedGamesList();
+  if (gameState && activeScreen === 'game') renderGame();
+  setConnection(gameMode === 'online' ? Boolean(socket?.connected) : false, gameMode === 'online' ? (socket?.connected ? 'CONNECTED' : 'SERVER OFFLINE') : `${gameMode.toUpperCase()} MODE`);
 }
 
 function updatePresence(payload) {
@@ -807,7 +1246,7 @@ function renderTrainingStatus(status) {
     training: 'TRAINING EVALUATION WEIGHTS', stopping: 'STOPPING AFTER CURRENT GAMES',
     complete: 'GENERATION COMPLETE', error: 'TRAINING ERROR'
   };
-  phase.textContent = status?.enabled === false ? 'TRAINING DISABLED ON THIS SERVER' : (phaseLabels[status?.phase] || 'READY');
+  phase.textContent = status?.enabled === false ? 'SET TRAINING_API_KEY ON THE SERVER' : (phaseLabels[status?.phase] || 'READY');
   $('trainingProgressFill').style.width = `${Math.max(0, Math.min(100, Number(status?.progress) || 0))}%`;
   $('trainingProgressText').textContent = status?.phase === 'training'
     ? 'Dataset collected · fitting model weights…'
@@ -874,7 +1313,7 @@ async function startTraining() {
   try {
     const response = await fetch('/api/training/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...trainingAuthHeaders() },
       body: JSON.stringify({
         games: Number($('trainingGamesSelect').value) || 200,
         workers: Number($('trainingWorkersSelect').value) || 4,
@@ -894,7 +1333,7 @@ async function startTraining() {
 
 async function stopTraining() {
   try {
-    const response = await fetch('/api/training/stop', { method: 'POST' });
+    const response = await fetch('/api/training/stop', { method: 'POST', headers: trainingAuthHeaders() });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not stop training.');
     renderTrainingStatus(result);
@@ -907,7 +1346,7 @@ if (socket) {
   socket.on('connect', () => {
     setConnection(gameMode !== 'local', gameMode === 'local' ? 'LOCAL MODE' : 'CONNECTED');
     const saved = savedSession();
-    if (saved?.code && saved.playerId === playerId && !roomCode) {
+    if (gameMode !== 'replay' && saved?.code && saved.playerId === playerId && !roomCode) {
       socket.emit('join-room', { code: saved.code, playerId, name: saved.name || getPlayerName(), reconnect: true });
       showLobbyMessage('Reconnecting to your last match…');
     }
@@ -935,6 +1374,12 @@ if (socket) {
     toast(message);
   });
   socket.on('game-state', (payload) => {
+    if (gameMode === 'replay' && replayReturnContext?.roomCode && payload.code === replayReturnContext.roomCode) {
+      replayReturnContext.gameState = payload.state;
+      replayReturnContext.players = payload.players || replayReturnContext.players;
+      replayReturnContext.presence = payload.presence || replayReturnContext.presence;
+      return;
+    }
     if (payload.code !== roomCode) return;
     const previousLength = gameState?.history?.length || 0;
     gameState = payload.state;
@@ -954,6 +1399,13 @@ if (socket) {
     renderGame();
   });
   socket.on('match-ended', (payload) => {
+    if (gameMode === 'replay' && replayReturnContext?.roomCode && payload.code === replayReturnContext.roomCode) {
+      replayReturnContext.gameState = payload.state;
+      replayReturnContext.players = payload.players || replayReturnContext.players;
+      replayReturnContext.presence = payload.presence || replayReturnContext.presence;
+      replayReturnContext.endPopupShown = false;
+      return;
+    }
     if (payload.code !== roomCode || !payload.state?.gameOver) return;
     gameState = payload.state;
     players = payload.players || players;
@@ -978,10 +1430,18 @@ if (socket) {
   socket.on('move-error', (message) => toast(message));
   socket.on('room-left', () => toast('You left the match.'));
   socket.on('match-restarted', (payload) => {
+    if (gameMode === 'replay' && replayReturnContext?.roomCode && payload.code === replayReturnContext.roomCode) {
+      replayReturnContext.gameState = payload.state;
+      replayReturnContext.initialGameState = createInitialState();
+      replayReturnContext.initialGameState.startedAt = payload.state.startedAt || Date.now();
+      replayReturnContext.endPopupShown = false;
+      return;
+    }
     if (payload.code !== roomCode) return;
     endPopupShown = false;
     closeMatchEndDialog();
     gameState = payload.state;
+    resetInitialGameState(gameState);
     selected = null;
     legalMoves = [];
     renderGame();
@@ -992,13 +1452,70 @@ if (socket) {
   showLobbyMessage('Online multiplayer client failed to load. Local play is still available.', 'error');
 }
 
+$('savedGamesNavBtn').addEventListener('click', openSavedGames);
+$('savedGamesBackBtn').addEventListener('click', returnFromSavedGames);
+$('syncSavedGamesBtn').addEventListener('click', () => syncSavedGames());
+$('copyArchiveKeyBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('archiveKeyInput').value || getArchiveKey());
+    $('archiveSyncStatus').textContent = 'Private archive key copied. Keep it secret.';
+  } catch {
+    $('archiveKeyInput').type = 'text';
+    $('archiveKeyInput').select();
+    $('archiveSyncStatus').textContent = 'Select and copy the key manually. Keep it private.';
+  }
+});
+$('useArchiveKeyBtn').addEventListener('click', async () => {
+  try {
+    setArchiveKey($('archiveKeyInput').value);
+    $('archiveKeyInput').value = getArchiveKey();
+    $('archiveSyncStatus').textContent = 'This device is now linked to that archive. Syncing…';
+    await syncSavedGames();
+    await refreshSavedGamesList();
+  } catch (error) {
+    $('archiveSyncStatus').textContent = error instanceof Error ? error.message : 'Could not link this archive.';
+  }
+});
+$('exportSavedGamesBtn').addEventListener('click', exportSavedGamesBackup);
+$('importSavedGamesBtn').addEventListener('click', () => $('importSavedGamesInput').click());
+$('importSavedGamesInput').addEventListener('change', (event) => importSavedGamesBackup(event.target.files?.[0]));
+$('replayPlayPauseBtn').addEventListener('click', () => replayPlaying ? pauseReplay() : startReplayPlayback());
+$('replayRestartBtn').addEventListener('click', () => { setReplayPosition(0); startReplayPlayback(); });
+$('replayPreviousBtn').addEventListener('click', () => setReplayPosition(replayIndex - 1));
+$('replayNextBtn').addEventListener('click', () => { pauseReplay(); applyNextReplayMove(); });
+$('replaySpeedSelect').addEventListener('change', (event) => {
+  replaySpeed = event.target.value || 'original';
+  if (replayPlaying) scheduleReplayMove();
+  renderReplayControls();
+});
+
 $('createRoomBtn').addEventListener('click', createRoom);
 $('localPlayBtn').addEventListener('click', startLocalGame);
 $('computerPlayBtn').addEventListener('click', startComputerGame);
 $('aiWatchBtn').addEventListener('click', startAiWatchGame);
+const trainingKeyInput = $('trainingApiKeyInput');
+try { trainingKeyInput.value = sessionStorage.getItem(TRAINING_KEY_SESSION) || ''; } catch {}
+$('saveTrainingKeyBtn').addEventListener('click', () => {
+  const key = trainingKeyInput.value.trim();
+  try {
+    if (key) sessionStorage.setItem(TRAINING_KEY_SESSION, key);
+    else sessionStorage.removeItem(TRAINING_KEY_SESSION);
+    $('trainingKeyMessage').textContent = key
+      ? 'Key saved for this browser tab. You can now start a generation.'
+      : 'Key cleared. Enter the server key to use live training.';
+  } catch {
+    $('trainingKeyMessage').textContent = 'This browser could not save the key for this tab. Check its privacy settings.';
+  }
+});
 $('startTrainingBtn').addEventListener('click', startTraining);
 $('stopTrainingBtn').addEventListener('click', stopTraining);
 refreshTrainingStatus();
+try { $('archiveKeyInput').value = getArchiveKey(); } catch (error) { $('archiveSyncStatus').textContent = error.message; }
+refreshSavedGamesList();
+if (navigator.onLine) syncSavedGames({ quiet: true });
+window.addEventListener('online', () => { syncSavedGames({ quiet: true }); refreshSavedGamesList(); });
+window.addEventListener('offline', () => { if ($('archiveSyncStatus')) $('archiveSyncStatus').textContent = 'Offline: saved games remain on this device and will sync after reconnecting.'; });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && navigator.onLine) syncSavedGames({ quiet: true }); });
 $('localOrientationSelect').value = localOrientation;
 $('localOrientationSelect').addEventListener('change', (event) => {
   localOrientation = event.target.value === 'fixed' ? 'fixed' : 'rotate';
@@ -1026,7 +1543,10 @@ $('copyRoomBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(roomCode || ''); toast('Room code copied.'); }
   catch { toast(`Share this code: ${roomCode}`); }
 });
-$('leaveRoomBtn').addEventListener('click', leaveRoom);
+$('leaveRoomBtn').addEventListener('click', () => {
+  if (gameMode === 'replay') exitSavedGameReplay();
+  else leaveRoom();
+});
 $('newGameBtn').addEventListener('click', () => {
   if (gameMode === 'computer') {
     startComputerGame();
@@ -1040,6 +1560,7 @@ $('newGameBtn').addEventListener('click', () => {
     endPopupShown = false;
     closeMatchEndDialog();
     gameState = createInitialState();
+    resetInitialGameState(gameState);
     selected = null;
     legalMoves = [];
     renderGame();
@@ -1048,6 +1569,7 @@ $('newGameBtn').addEventListener('click', () => {
   }
   if (socket?.connected && roomCode) socket.emit('restart-game', { code: roomCode });
 });
+$('saveMatchBtn').addEventListener('click', saveCurrentMatch);
 $('viewMatchStatsBtn').addEventListener('click', openEndStatistics);
 $('closeMatchEndBtn').addEventListener('click', closeMatchEndDialog);
 $('backToEndAnnouncementBtn').addEventListener('click', backToEndAnnouncement);

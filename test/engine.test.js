@@ -195,3 +195,12 @@ test('the rules engine ends a game after 100 half-moves without a pawn move or c
   assert.equal(state.gameOver, true);
   assert.equal(state.status, 'fifty-move-rule');
 });
+
+
+test('initial states and move records retain timestamps for saved-game replay', () => {
+  const state = createInitialState();
+  assert.ok(Number.isFinite(state.startedAt));
+  const { record } = playMove(state, { x: 4, y: 6 }, { x: 4, y: 4 });
+  assert.ok(Number.isFinite(record.playedAt));
+  assert.ok(record.playedAt >= state.startedAt);
+});

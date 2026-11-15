@@ -1,4 +1,4 @@
-# Chess Evolution — Self-Play & Training Lab (v1.9.0)
+# Chess Evolution — Self-Play & Training Lab (v1.9.1)
 
 There are now two distinct ways to run AI-vs-AI games:
 
@@ -33,7 +33,7 @@ Recommended first substantial run:
 
 The browser panel reports games completed, positions saved, captures, inheritance events, W/D/L results, model generation, validation loss and learned weights. Use **Stop** to stop between games; finished game records are retained and a new model is only promoted if enough labeled samples were collected.
 
-The browser Training Lab runs on the machine where `npm start` is running. Opening the site on a phone does not move the training workload to the phone; the server computer performs the training. The API is enabled by default for local development. On a production deployment it is disabled unless `ENABLE_TRAINING_API=true` is explicitly configured, to avoid exposing CPU-intensive work publicly.
+The browser Training Lab runs on the machine where the Node.js server is running. Opening the site on a phone does not move the training workload to the phone; the server performs the training. The API is enabled by default for local development. On a production deployment it remains disabled until the owner configures a private `TRAINING_API_KEY`. The owner then enters that key in the Training Lab; the browser stores it only for the current tab session and sends it only with training start/stop requests. Never commit the secret to GitHub.
 
 ## Command-line training
 
